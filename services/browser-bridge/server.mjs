@@ -73,11 +73,24 @@ function parseCookies(header) {
 }
 
 const EXTRACT_ASSISTANT = () => {
+  // Desktop layout: role-marked message nodes.
   const nodes = document.querySelectorAll('[data-message-author-role="assistant"]');
   if (nodes.length) return (nodes[nodes.length - 1].innerText || "").trim();
   const turns = document.querySelectorAll('[data-testid^="conversation-turn-"]');
   if (turns.length) return (turns[turns.length - 1].innerText || "").trim();
-  return "";
+  // Anonymous/mobile-web layout (verified live): no role nodes at all —
+  // the transcript is plain text: "You said: <prompt> ChatGPT said:
+  // <answer>" followed by footer chrome. Slice the answer out of it.
+  const text = document.body?.innerText ?? "";
+  const youIdx = text.lastIndexOf("You said:");
+  const saidIdx = text.indexOf("ChatGPT said:", youIdx >= 0 ? youIdx : 0);
+  if (saidIdx < 0) return "";
+  let answer = text.slice(saidIdx + "ChatGPT said:".length);
+  for (const marker of ["ChatGPT is AI", "Chat with ChatGPT"]) {
+    const cut = answer.indexOf(marker);
+    if (cut >= 0) answer = answer.slice(0, cut);
+  }
+  return answer.trim();
 };
 
 const PAGE_PROBLEM = () => {
