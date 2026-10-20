@@ -228,6 +228,7 @@ export const bn: Record<string, string> = {
   "nav.inspector": "ইনস্পেক্টর",
   "nav.live": "লাইভ",
   "live.title": "লাইভ রিকোয়েস্ট",
+  "live.today": "আজ",
   "live.streaming": "স্ট্রিমিং হচ্ছে",
   "live.reconnecting": "আবার কানেক্ট হচ্ছে…",
   "live.filterPlaceholder": "প্রোভাইডার / মডেল / স্ট্যাটাস ফিল্টার…",

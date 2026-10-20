@@ -1818,11 +1818,21 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     send("snapshot", { entries: inspector.list(50), routing: routingLog.recent(20) });
+    const sendStats = () => {
+      try {
+        send("stats", { ...store.liveStats(), providersConnected: providers.length });
+      } catch {
+        /* stats are best-effort */
+      }
+    };
+    sendStats();
+    const statsTimer = setInterval(sendStats, 5_000);
     const unsubEntry = inspector.subscribe((entry) => send("request", entry));
     const unsubRouting = routingLog.subscribe((event) => send("routing", event));
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
     req.on("close", () => {
       clearInterval(heartbeat);
+      clearInterval(statsTimer);
       unsubEntry();
       unsubRouting();
     });

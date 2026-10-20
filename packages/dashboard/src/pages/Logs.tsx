@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type InspectEntry, type KeyRecord, type RequestLogRow } from "../api";
+import {
+  api,
+  subscribeLive,
+  type InspectEntry,
+  type KeyRecord,
+  type RequestLogRow,
+} from "../api";
 import { Tabs, TabEmpty } from "../components/Tabs";
 
 const LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -44,6 +50,35 @@ function RequestLogs() {
       })
       .catch((e) => setError(String(e)));
   }, [q, provider, status, keyId, page, tick]);
+
+  // Live tail: new requests stream in when the view is unfiltered, page 1.
+  useEffect(() => {
+    const unfiltered = !q && !provider && !status && !keyId;
+    const unsub = subscribeLive({
+      onRequest: (entry) => {
+        if (!unfiltered || page !== 0) return;
+        const row: RequestLogRow = {
+          id: entry.id,
+          ts: entry.ts,
+          keyId: entry.keyId,
+          provider: entry.provider,
+          model: entry.model,
+          strategy: entry.strategy,
+          status: entry.status,
+          latencyMs: entry.latencyMs,
+          promptTokens: entry.promptTokens,
+          completionTokens: entry.completionTokens,
+          costUsd: entry.costUsd,
+          cached: entry.cached,
+          request: entry.request,
+          responsePreview: entry.responsePreview,
+        };
+        setLogs((prev) => [row, ...prev.filter((l) => l.id !== row.id)].slice(0, LOG_PAGE_SIZE));
+        setTotal((n) => n + 1);
+      },
+    });
+    return unsub;
+  }, [q, provider, status, keyId, page]);
 
   const pages = Math.max(1, Math.ceil(total / LOG_PAGE_SIZE));
   const inputCls = "rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm";
