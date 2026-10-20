@@ -32,6 +32,80 @@ const ACCOUNT_STRATEGIES = [
 ];
 
 const card = "rounded-xl border border-zinc-800 bg-zinc-900 p-4";
+
+type BreakerRow = {
+  key: string;
+  providerId: string;
+  model: string;
+  failures: number;
+  lastKind: string;
+  lastError: string;
+  open: boolean;
+  retryInMs: number;
+};
+
+function CircuitBreakers() {
+  const [rows, setRows] = useState<BreakerRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const load = () => {
+    api
+      .circuitBreakers()
+      .then((r) => setRows(r.breakers))
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  };
+  useEffect(load, []);
+  const reset = async (key?: string) => {
+    await api.resetBreaker(key).catch(() => {});
+    load();
+  };
+  const fmtRetry = (ms: number): string =>
+    ms >= 3600_000 ? `${(ms / 3600_000).toFixed(1)}h` : ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${Math.ceil(ms / 1000)}s`;
+  return (
+    <div className={card}>
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="font-semibold">⚡ Circuit breakers — failing models</h2>
+        {rows.length > 0 && (
+          <button onClick={() => reset()} className="rounded-lg border border-zinc-700 px-2.5 py-1 text-xs hover:bg-zinc-800">
+            Reset all
+          </button>
+        )}
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        A provider+model pair that keeps failing is blacklisted so requests skip it instantly
+        instead of wasting a round-trip (dead models start at 10 min and escalate; one probe
+        is allowed after the cooldown).
+      </p>
+      {!loaded ? (
+        <p className="text-sm text-zinc-500">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-emerald-400">All models healthy — no breakers tripped. ✓</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((b) => (
+            <div key={b.key} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-sm">
+              <span className={`h-2 w-2 shrink-0 rounded-full ${b.open ? "bg-red-500" : "bg-amber-500"}`} />
+              <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                {b.providerId}:{b.model}
+                <span className="block truncate font-sans text-[11px] text-zinc-500">{b.lastError}</span>
+              </span>
+              <span className="shrink-0 text-xs text-zinc-400">{b.failures} failures · {b.lastKind}</span>
+              <span className="shrink-0 text-xs text-zinc-400">
+                {b.open ? `retry in ${fmtRetry(b.retryInMs)}` : "half-open"}
+              </span>
+              <button
+                onClick={() => reset(b.key)}
+                className="shrink-0 rounded-lg border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800"
+              >
+                Reset
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 const input = "rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm";
 
 /**
@@ -200,6 +274,10 @@ export default function Routing() {
           })}
         </div>
         {msg && <p className="mt-2 text-sm text-red-400">{msg}</p>}
+      </div>
+
+      <div className="mt-4">
+        <CircuitBreakers />
       </div>
     </div>
   );

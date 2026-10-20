@@ -145,6 +145,24 @@ export const api = {
   revokeKey: (id: string) => req<{ revoked: boolean }>(`/api/keys/${id}`, { method: "DELETE" }),
   setBudget: (id: string, budgetUsd: number | null) =>
     req(`/api/keys/${id}/budget`, { method: "PUT", body: JSON.stringify({ budgetUsd }) }),
+  circuitBreakers: () =>
+    req<{
+      breakers: Array<{
+        key: string;
+        providerId: string;
+        model: string;
+        failures: number;
+        lastKind: string;
+        lastError: string;
+        open: boolean;
+        retryInMs: number;
+      }>;
+    }>("/api/circuit-breakers"),
+  resetBreaker: (key?: string) =>
+    req<{ ok: boolean }>("/api/circuit-breakers/reset", {
+      method: "POST",
+      body: JSON.stringify(key ? { key } : {}),
+    }),
   cacheStats: () =>
     req<{
       exact: {

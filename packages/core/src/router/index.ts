@@ -30,7 +30,8 @@ import { orderComboTargets, type RouterCombo } from "../combos/index.js";
 import { autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import { buildEmulationPrompt, nativeTools, parseEmulatedToolCall } from "../tools/emulation.js";
 import { SemanticCache } from "../cache/semantic.js";
-import { classifyError, isRetryable } from "./errors.js";
+import { classifyError, isRetryable, UpstreamError } from "./errors.js";
+import { ModelBreaker, type BreakerSnapshotEntry } from "./breaker.js";
 import {
   clearStickyProvider,
   emptyStats,
@@ -135,6 +136,10 @@ export interface Router {
   pools: Map<string, AccountPool>;
   /** latest rate-limit telemetry per provider (from upstream headers) */
   quotaSnapshot: () => Map<string, QuotaInfo>;
+  /** per-(provider, model) circuit breaker state (rotation v2) */
+  breakerSnapshot: () => BreakerSnapshotEntry[];
+  /** clear one breaker pair ("provider:model") or all of them */
+  resetBreaker: (key?: string) => void;
 }
 
 const COOLDOWN_MS = 30_000;
@@ -248,6 +253,7 @@ async function executeWithRotation(
   }
   if (sessionAccounts.length > 0) {
     const counts = new Map((hooks?.stats(provider.id) ?? []).map((x) => [x.id, x.calls]));
+    let modelErrTries = 0;
     const ordered = orderAccounts(
       provider.id,
       sessionAccounts.map((a) => ({ id: a.id, calls: counts.get(a.id) ?? 0 })),
@@ -271,6 +277,7 @@ async function executeWithRotation(
           hooks?.record(acct, false, err instanceof Error ? err.message : String(err));
         }
         if (kind === "auth_error" || kind === "rate_limited") continue; // next account
+        if (kind === "model_error" && ++modelErrTries <= 1) continue; // one more account may be entitled
         throw err;
       }
     }
@@ -293,6 +300,7 @@ async function executeWithRotation(
     }
   }
   let lastErr: unknown = null;
+  let keyModelErrTries = 0;
   for (;;) {
     const key = pool.next(tried, Date.now(), accountStrategy);
     // NB: null-check, not falsiness — keyless/noAuth providers legitimately
@@ -314,6 +322,10 @@ async function executeWithRotation(
         pool.reportFailure(key);
         continue; // try the next key
       }
+      if (kind === "model_error" && ++keyModelErrTries <= 1) {
+        if (acctId) hooks?.record(acctId, false, err instanceof Error ? err.message : String(err));
+        continue; // one more key may be entitled to this model
+      }
       throw err;
     }
   }
@@ -324,6 +336,7 @@ async function executeWithRotation(
 export function createRouter(providers: ResolvedProvider[], opts: RouterOptions = {}): Router {
   const stats = new Map<string, ProviderStats>();
   const cooldown = new CooldownTracker();
+  const breaker = new ModelBreaker();
   const affinity = new Map<string, string>();
   const consecutiveFailures = new Map<string, number>();
   const telemetry = new QuotaTelemetry();
@@ -605,6 +618,14 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
         }
       }
 
+      // Circuit breaker (rotation v2): a provider+model pair that keeps
+      // failing is skipped instantly instead of costing a round-trip.
+      if (breaker.gate(provider.id, model) === "blocked") {
+        attempted.push(`${provider.id} (breaker open)`);
+        lastError = new Error(breaker.describe(provider.id, model));
+        continue;
+      }
+
       try {
         // Pools are rebuilt when the provider's key set changes (accounts
         // added/removed at runtime) — the map alone would go stale.
@@ -616,6 +637,7 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
           poolSigs.set(provider.id, sig);
         }
         const result = await executeWithRotation(pool, provider, model, attemptBody, fetchFn, timeoutMs, accountHooks, opts.forceAccountId);
+        breaker.recordSuccess(provider.id, model);
         if (emulate && result.response) {
           const tc = parseEmulatedToolCall(result.response.choices[0]?.message.content ?? "");
           if (tc) {
@@ -649,14 +671,24 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
         record(provider.id, Date.now() - started, true);
         lastError = err;
         const kind = classifyError(err);
-        if (isRetryable(kind)) {
+        const status = err instanceof UpstreamError ? err.status : 0;
+        breaker.recordFailure(
+          provider.id,
+          model,
+          kind,
+          status,
+          err instanceof Error ? err.message : String(err),
+        );
+        if (kind !== "model_error" && isRetryable(kind)) {
           cooldown.cool(provider.id, COOLDOWN_MS);
           const n = (consecutiveFailures.get(provider.id) ?? 0) + 1;
           consecutiveFailures.set(provider.id, n);
           opts.onEvent?.({ type: "provider_failed", providerId: provider.id, kind, consecutiveFailures: n });
         }
         if (strategy === "fill-first") clearStickyProvider(provider.id);
-        if (!isRetryable(kind)) break; // auth/bad-request: stop immediately
+        // model_error falls through: the next provider may have the model.
+        // auth/bad-request still stop immediately.
+        if (!isRetryable(kind) && kind !== "model_error") break;
       }
     }
 
@@ -664,5 +696,12 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     throw new Error(`all providers failed (tried: ${attempted.join(", ")}): ${msg}`);
   }
 
-  return { route, stats, pools, quotaSnapshot: () => telemetry.snapshot() };
+  return {
+    route,
+    stats,
+    pools,
+    quotaSnapshot: () => telemetry.snapshot(),
+    breakerSnapshot: () => breaker.snapshot(),
+    resetBreaker: (key?: string) => breaker.reset(key),
+  };
 }
