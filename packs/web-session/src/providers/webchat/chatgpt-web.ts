@@ -42,6 +42,7 @@
  *    fingerprint included). Plain Node fetch may be challenged.
  */
 import { randomUUID } from "node:crypto";
+import { mintSentinelHeaders } from "./chatgptSentinel.js";
 import type { CookieJar } from "../../cookieJar.js";
 import {
   BROWSER_UA,
@@ -376,8 +377,19 @@ export class ChatGptWebDriver implements WebChatDriver {
     const cookie = this.jar.headerFor(CONVERSATION_URL);
     if (cookie) headers.cookie = cookie;
     if (this.accessToken) headers.authorization = `Bearer ${this.accessToken}`;
-    // NOTE: no openai-sentinel-* / x-conduit-token headers — see the
-    // NEEDS LIVE VERIFICATION note in the file header.
+    // Sentinel anti-abuse headers (chatgptSentinel.ts): proof-of-work is
+    // solved headlessly; when ChatGPT additionally demands Turnstile the
+    // mint throws a clear error (a real browser is required for that
+    // token). When the requirements endpoint is unreachable we proceed
+    // without headers, exactly as before.
+    const sentinel = await mintSentinelHeaders({
+      providerId: this.id,
+      fetchFn: this.fetchFn,
+      userAgent: BROWSER_UA,
+      accessToken: this.accessToken ?? undefined,
+      cookie,
+    });
+    if (sentinel) Object.assign(headers, sentinel);
 
     // Request body shape: `storeConversationDraft` in chatgptWebFirstParty.ts.
     const body = {
