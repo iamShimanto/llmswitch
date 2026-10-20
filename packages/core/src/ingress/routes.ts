@@ -1077,9 +1077,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const dir = sessionsDir();
     mkdirSync(dir, { recursive: true });
     const file = join(dir, `${def.id}.json`);
+    const accessToken =
+      typeof req.body?.accessToken === "string" && req.body.accessToken.trim()
+        ? req.body.accessToken.trim()
+        : undefined;
     writeFileSync(
       file,
-      JSON.stringify({ kind: "cookies", provider: def.id, cookies, cookieDomain: domain, savedAt: Date.now() }, null, 2),
+      JSON.stringify(
+        {
+          kind: "cookies",
+          provider: def.id,
+          cookies,
+          cookieDomain: domain,
+          ...(accessToken ? { accessToken } : {}),
+          savedAt: Date.now(),
+        },
+        null,
+        2,
+      ),
       { mode: 0o600 },
     );
     try {

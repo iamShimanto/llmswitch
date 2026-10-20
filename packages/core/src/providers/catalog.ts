@@ -2925,6 +2925,17 @@ export const CATALOG_PROVIDERS: ProviderDef[] = [
     costTier: 1,
   },
   {
+    id: "muse-spark-web",
+    name: "Muse Spark Web (Meta AI)",
+    baseUrl: "https://www.meta.ai",
+    wireFormat: "openai",
+    authType: "cookie",
+    envKey: "MUSE_SPARK_WEB_COOKIES",
+    models: ["muse-spark", "muse-spark-thinking", "muse-spark-contemplating"],
+    defaultModel: "muse-spark",
+    costTier: 1,
+  },
+  {
     id: "huggingchat",
     name: "HuggingChat",
     baseUrl: "https://huggingface.co/chat",

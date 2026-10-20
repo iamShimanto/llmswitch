@@ -53,6 +53,7 @@ function ProviderDetail({
   };
 
   const [cookieInput, setCookieInput] = useState("");
+  const [museTokenInput, setMuseTokenInput] = useState("");
   const [importing, setImporting] = useState(false);
   const [cookieMsg, setCookieMsg] = useState("");
 
@@ -60,7 +61,12 @@ function ProviderDetail({
     setImporting(true);
     setCookieMsg("");
     try {
-      const r = await api.importSession(p.id, cookieInput);
+      const r = await api.importSession(
+        p.id,
+        cookieInput,
+        undefined,
+        p.id === "muse-spark-web" ? museTokenInput.trim() || undefined : undefined,
+      );
       if (r.connected) {
         setCookieInput("");
         onChanged();
@@ -304,6 +310,21 @@ function ProviderDetail({
                 rows={3}
                 className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
               />
+              {p.id === "muse-spark-web" && (
+                <div className="mt-2">
+                  <input
+                    value={museTokenInput}
+                    onChange={(e) => setMuseTokenInput(e.target.value)}
+                    placeholder="ecto1:… access token (Meta AI — the browser extension fills this automatically)"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+                  />
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Meta AI also needs this short-lived token from the meta.ai page
+                    (it expires in ~5 minutes — reconnect to refresh; the extension
+                    re-grabs it in one click).
+                  </p>
+                </div>
+              )}
               <div className="mt-2">
                 <button
                   onClick={importCookies}

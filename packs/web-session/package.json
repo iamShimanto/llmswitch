@@ -2,7 +2,8 @@
   "description": "Opt-in web-session provider packs for LLMSwitch (experimental)",
   "devDependencies": {
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "@types/ws": "^8.18.2"
   },
   "main": "./dist/src/index.js",
   "name": "@llmswitch/web-session",
@@ -15,6 +16,7 @@
   "types": "./dist/src/index.d.ts",
   "version": "0.1.0",
   "dependencies": {
-    "parse5": "^8.0.1"
+    "parse5": "^8.0.1",
+    "ws": "^8.22.0"
   }
 }

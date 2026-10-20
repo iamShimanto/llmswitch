@@ -22,7 +22,7 @@ const EXPECTED_IDS = [
   "blackbox", "chatgpt-web", "chatgpt-web-free", "claude-web",
   "claude-web-cookie", "copilot-web", "deepai", "deepseek-web",
   "duckduckgo", "grok-web", "huggingchat", "lmarena", "manus", "poe",
-  "venice-web", "you-com-web",
+  "venice-web", "you-com-web", "muse-spark-web",
 ];
 
 function tempEnv(): NodeJS.ProcessEnv {
@@ -38,7 +38,7 @@ function writeCookieSession(env: NodeJS.ProcessEnv, id: string, domain: string):
 }
 
 describe("catalog: cookie providers (P11-J)", () => {
-  it("all 16 ids exist with authType cookie", () => {
+  it("all 17 ids exist with authType cookie", () => {
     const byId = new Map(CATALOG_PROVIDERS.map((p) => [p.id, p]));
     for (const id of EXPECTED_IDS) {
       const def = byId.get(id);
@@ -47,7 +47,7 @@ describe("catalog: cookie providers (P11-J)", () => {
       expect(def!.models.length, id).toBeGreaterThan(0);
       expect(def!.models, id).toContain(def!.defaultModel);
     }
-    expect(WEBCHAT_PROVIDER_IDS.size).toBe(16);
+    expect(WEBCHAT_PROVIDER_IDS.size).toBe(17);
     for (const id of EXPECTED_IDS) expect(WEBCHAT_PROVIDER_IDS.has(id)).toBe(true);
   });
 });
