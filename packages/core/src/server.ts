@@ -14,6 +14,7 @@ import { createRouter, type Router } from "./router/index.js";
 import type { RouterCombo } from "./combos/index.js";
 import { RoutingEventLog } from "./router/events.js";
 import { Store } from "./store/db.js";
+import { costUsd, setPriceOverrides } from "./billing/prices.js";
 import type { ProviderRegistry } from "./providers/registry.js";
 import type { ResolvedProvider } from "./providers/types.js";
 
@@ -49,6 +50,20 @@ export function createServer(
     res.setHeader("referrer-policy", "no-referrer");
     next();
   });
+
+  // Pricing: apply saved user overrides, then backfill historical usage
+  // rows that were logged before their model had a price (one-time).
+  try {
+    const rawOverrides = store.getSetting("price_overrides");
+    if (rawOverrides) setPriceOverrides(JSON.parse(rawOverrides) as Record<string, { input: number; output: number }>);
+    if (!store.getSetting("pricing_backfill_v2")) {
+      const filled = store.backfillZeroCosts(costUsd);
+      store.setSetting("pricing_backfill_v2", "1");
+      if (filled > 0) console.log(`[llmswitch] pricing: backfilled cost for ${filled} historical usage rows`);
+    }
+  } catch {
+    /* pricing warmup must never block boot */
+  }
 
   const limiter = new RateLimiter(600);
   const cache = new PromptCache();

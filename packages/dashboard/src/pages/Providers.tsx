@@ -1523,7 +1523,6 @@ export default function Providers() {
       <p className="mb-1 text-xs text-zinc-500">Dashboard › <span className="text-zinc-300">Providers</span></p>
       <h1 className="mb-6 text-2xl font-bold">{t("nav.providers")}</h1>
       {error && <p className="mb-4 text-red-400">{error}</p>}
-      <OAuthConnectPanel />
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <input
           value={query}

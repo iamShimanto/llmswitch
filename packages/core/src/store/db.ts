@@ -794,6 +794,7 @@ export class Store {
     promptTokens: number;
     completionTokens: number;
     errors: number;
+    costUsd: number;
   }> {
     return this.db
       .prepare(
@@ -801,7 +802,8 @@ export class Store {
                 COUNT(*) AS requests,
                 SUM(prompt_tokens) AS promptTokens,
                 SUM(completion_tokens) AS completionTokens,
-                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors
+                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                COALESCE(SUM(cost_usd), 0) AS costUsd
          FROM usage_log WHERE ts >= ? GROUP BY provider, model ORDER BY requests DESC`,
       )
       .all(sinceMs) as Array<{
@@ -811,7 +813,55 @@ export class Store {
       promptTokens: number;
       completionTokens: number;
       errors: number;
+      costUsd: number;
     }>;
+  }
+
+  /** All-time per-provider totals from the usage log (persistent —
+   * unlike the router's in-memory counters these survive restarts). */
+  providerUsageStats(): Map<string, { calls: number; errors: number; totalLatencyMs: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT provider,
+                COUNT(*) AS calls,
+                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                COALESCE(SUM(latency_ms), 0) AS totalLatencyMs
+         FROM usage_log GROUP BY provider`,
+      )
+      .all() as Array<{ provider: string; calls: number; errors: number; totalLatencyMs: number }>;
+    return new Map(rows.map((r) => [r.provider, r]));
+  }
+
+  /**
+   * Recompute cost for historical usage rows that were logged before
+   * their model had a price (cost_usd = 0 with tokens present). Returns
+   * the number of rows updated. Rows whose price is still $0 (free or
+   * unknown) are left untouched.
+   */
+  backfillZeroCosts(
+    price: (provider: string, model: string, promptTokens: number, completionTokens: number) => number,
+  ): number {
+    const rows = this.db
+      .prepare(
+        "SELECT id, provider, model, prompt_tokens, completion_tokens FROM usage_log WHERE cost_usd = 0 AND (prompt_tokens + completion_tokens) > 0",
+      )
+      .all() as Array<{
+      id: number;
+      provider: string;
+      model: string;
+      prompt_tokens: number;
+      completion_tokens: number;
+    }>;
+    const upd = this.db.prepare("UPDATE usage_log SET cost_usd = ? WHERE id = ?");
+    let n = 0;
+    for (const r of rows) {
+      const c = price(r.provider, r.model, r.prompt_tokens, r.completion_tokens);
+      if (c > 0) {
+        upd.run(c, r.id);
+        n++;
+      }
+    }
+    return n;
   }
 
   /** Append an audit event. Never throws. */

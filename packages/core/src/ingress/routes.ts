@@ -7,7 +7,7 @@ import { RoutingEventLog } from "../router/events.js";
 import { antigravityAccountQuotas } from "../quota/antigravityQuota.js";
 import { AUTO_TEMPLATES, autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import type { Alerter } from "../alerts/index.js";
-import { costUsd } from "../billing/prices.js";
+import { costUsd, priceInfo, pricingCatalog, setPriceOverrides } from "../billing/prices.js";
 import type { PromptCache } from "../cache/index.js";
 import { compressText, isCompressionMode } from "../compression/index.js";
 import type { Inspector } from "../inspect/index.js";
@@ -1600,6 +1600,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // ---- Dashboard API (used by the SPA) ----
   app.get("/api/providers", (_req: Request, res: Response) => {
     deps.refreshProviders?.();
+    // Stats come from the persistent usage log, NOT the router's
+    // in-memory counters — deploys/restarts must not reset them.
+    const dbStats = store.providerUsageStats();
     res.json(
       providers.map((p) => {
         const pool = router.pools.get(p.id);
@@ -1613,7 +1616,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           defaultModel: p.defaultModel,
           keysTotal: ps.total,
           keysHealthy: ps.healthy,
-          stats: router.stats.get(p.id) ?? { calls: 0, errors: 0, totalLatencyMs: 0 },
+          stats: dbStats.get(p.id) ?? router.stats.get(p.id) ?? { calls: 0, errors: 0, totalLatencyMs: 0 },
         };
       }),
     );
@@ -2120,7 +2123,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.get("/api/keys", (_req: Request, res: Response) => {
-    res.json(store.listApiKeys());
+    res.json(
+      store.listApiKeys().map((k) => ({ ...k, monthSpendUsd: store.monthSpend(k.id) })),
+    );
   });
 
   app.delete("/api/keys/:id", (req: Request, res: Response) => {
@@ -2503,18 +2508,79 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/costs/summary", (_req: Request, res: Response) => {
     const d = new Date();
     const start = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1);
-    const byProvider = store.usageSummary(start).map((r) => ({
+    const agg = store.usageSummary(start);
+    const byProvider = agg.map((r) => ({
       provider: r.provider,
       model: r.model,
       requests: r.requests,
+      promptTokens: r.promptTokens,
+      completionTokens: r.completionTokens,
+      costUsd: Math.round(r.costUsd * 1e6) / 1e6,
+      priced: priceInfo(r.provider, r.model) != null,
     }));
-    // attach spend per provider from daily rollup
-    const rows = store.dailySpend(31).reduce((s, x) => s + x.total, 0);
+    const totalRequests = agg.reduce((s, r) => s + r.requests, 0);
+    const pricedRequests = agg
+      .filter((r) => priceInfo(r.provider, r.model) != null)
+      .reduce((s, r) => s + r.requests, 0);
     res.json({
-      monthToDateUsd: Math.round(rows * 1e6) / 1e6,
+      monthToDateUsd: Math.round(store.totalMonthSpend() * 1e6) / 1e6,
       byProvider,
+      coverage: {
+        pricedRequests,
+        totalRequests,
+        pct: totalRequests > 0 ? Math.round((pricedRequests / totalRequests) * 1000) / 10 : 100,
+      },
       forecast: store.forecastMonthly(),
     });
+  });
+
+  // ---- Pricing table (built-ins + user overrides) ----
+  app.get("/api/costs/pricing", (_req: Request, res: Response) => {
+    let overrides: Record<string, { input: number; output: number }> = {};
+    try {
+      overrides = JSON.parse(store.getSetting("price_overrides") ?? "{}") as typeof overrides;
+    } catch {
+      overrides = {};
+    }
+    res.json({ ...pricingCatalog(), overrides });
+  });
+
+  app.post("/api/costs/pricing/override", (req: Request, res: Response) => {
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    const input = Number(req.body?.input);
+    const output = Number(req.body?.output);
+    if (!key || !Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) {
+      res.status(400).json({
+        error: { message: "key plus non-negative input/output prices are required", type: "bad_request" },
+      });
+      return;
+    }
+    let overrides: Record<string, { input: number; output: number }> = {};
+    try {
+      overrides = JSON.parse(store.getSetting("price_overrides") ?? "{}") as typeof overrides;
+    } catch {
+      overrides = {};
+    }
+    overrides[key] = { input, output };
+    store.setSetting("price_overrides", JSON.stringify(overrides));
+    setPriceOverrides(overrides);
+    store.audit("pricing.override_set", key, `${input}/${output}`);
+    res.json({ ok: true, overrides });
+  });
+
+  app.delete("/api/costs/pricing/override", (req: Request, res: Response) => {
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    let overrides: Record<string, { input: number; output: number }> = {};
+    try {
+      overrides = JSON.parse(store.getSetting("price_overrides") ?? "{}") as typeof overrides;
+    } catch {
+      overrides = {};
+    }
+    delete overrides[key];
+    store.setSetting("price_overrides", JSON.stringify(overrides));
+    setPriceOverrides(overrides);
+    store.audit("pricing.override_removed", key);
+    res.json({ ok: true, overrides });
   });
 
   app.get("/api/costs/forecast", (_req: Request, res: Response) => {

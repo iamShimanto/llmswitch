@@ -43,6 +43,24 @@ export interface KeyRecord {
   rpmLimit: number;
   budgetUsd: number | null;
   workspaceId: string;
+  monthSpendUsd?: number;
+}
+
+export interface CostByProvider {
+  provider: string;
+  model: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  priced: boolean;
+}
+
+export interface PricingTable {
+  exact: Array<{ key: string; input: number; output: number }>;
+  patterns: Array<{ label: string; input: number; output: number }>;
+  providers: Array<{ key: string; input: number; output: number }>;
+  overrides: Record<string, { input: number; output: number }>;
 }
 
 export interface Workspace {
@@ -162,7 +180,23 @@ export const api = {
     req(`/api/keys/${id}/workspace`, { method: "PUT", body: JSON.stringify({ workspaceId }) }),
   audit: () => req<Array<{ id: number; ts: number; action: string; detail: string }>>("/api/audit"),
   costsSummary: () =>
-    req<{ monthToDateUsd: number; forecast: { projectedMonthly: number } }>("/api/costs/summary"),
+    req<{
+      monthToDateUsd: number;
+      forecast: { projectedMonthly: number };
+      byProvider: CostByProvider[];
+      coverage: { pricedRequests: number; totalRequests: number; pct: number };
+    }>("/api/costs/summary"),
+  costsPricing: () => req<PricingTable>("/api/costs/pricing"),
+  savePriceOverride: (key: string, input: number, output: number) =>
+    req<{ ok: boolean }>("/api/costs/pricing/override", {
+      method: "POST",
+      body: JSON.stringify({ key, input, output }),
+    }),
+  deletePriceOverride: (key: string) =>
+    req<{ ok: boolean }>("/api/costs/pricing/override", {
+      method: "DELETE",
+      body: JSON.stringify({ key }),
+    }),
   costsForecast: () =>
     req<{ daily: Array<{ day: string; total: number }>; projectedMonthly: number }>("/api/costs/forecast"),
   quotas: () => req<{ providers: QuotaProvider[] }>("/api/quotas"),
