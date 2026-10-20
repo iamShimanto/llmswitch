@@ -138,5 +138,27 @@ export function buildAutoTargets(
     }
   }
   scored.sort((a, b) => b.weight - a.weight);
-  return scored.slice(0, limit);
+  // Provider diversity: cap any single provider at 3 of the slots. A
+  // monoculture candidate list collapses when that one provider has a
+  // bad day (observed live: Kilo's catalog filled all 6 slots of
+  // auto/best-fast, and when Kilo started demanding sign-in for most
+  // models the combo looked dead even though other providers were fine).
+  const providerOf = (model: string) => model.slice(0, model.indexOf(":"));
+  const counts = new Map<string, number>();
+  const picked: typeof scored = [];
+  for (const t of scored) {
+    if (picked.length >= limit) break;
+    const pid = providerOf(t.model);
+    const n = counts.get(pid) ?? 0;
+    if (n >= 3) continue;
+    counts.set(pid, n + 1);
+    picked.push(t);
+  }
+  if (picked.length < limit) {
+    for (const t of scored) {
+      if (picked.length >= limit) break;
+      if (!picked.includes(t)) picked.push(t);
+    }
+  }
+  return picked;
 }
