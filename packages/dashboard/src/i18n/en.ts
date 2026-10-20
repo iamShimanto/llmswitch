@@ -252,6 +252,7 @@ export const en: Record<string, string> = {
   "nav.sessions": "Sessions",
   "nav.settings": "Settings",
   "nav.skills": "Skills",
+  "nav.advanced": "Advanced",
   "nav.translators": "Translators",
   "nav.usage": "Usage",
   "nav.webhooks": "Webhooks",

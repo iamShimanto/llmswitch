@@ -139,6 +139,22 @@ const SECTIONS: Section[] = [
   },
 ];
 
+const PRIMARY: Page[] = [
+  { id: "home", labelKey: "nav.overview" },
+  { id: "providers", labelKey: "nav.providers" },
+  { id: "models", labelKey: "nav.models" },
+  { id: "playground", labelKey: "nav.playground" },
+  { id: "keys", labelKey: "nav.apiKeys" },
+  { id: "usage", labelKey: "nav.usage" },
+  { id: "analytics", labelKey: "nav.analytics" },
+  { id: "settings", labelKey: "nav.settings" },
+];
+const PRIMARY_IDS = new Set(PRIMARY.map((p) => p.id));
+const ADVANCED_SECTIONS: Section[] = SECTIONS.map((sec) => ({
+  ...sec,
+  pages: sec.pages.filter((p) => !PRIMARY_IDS.has(p.id)),
+})).filter((sec) => sec.pages.length > 0);
+
 type TabId = string;
 
 function AppInner() {
@@ -157,6 +173,7 @@ function AppInner() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     // On small screens start with sections collapsed (except Overview) so the
     // nav doesn't push page content far below the fold.
@@ -198,8 +215,30 @@ function AppInner() {
           </div>
         </div>
         <nav className="mx-auto max-w-6xl px-4 pb-3">
-          <div className="flex flex-wrap gap-4">
-            {SECTIONS.map((s) => (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {PRIMARY.map((page) => (
+              <button
+                key={page.id}
+                onClick={() => setTab(page.id)}
+                className={`rounded-full border px-3.5 py-1.5 text-sm ${
+                  tab === page.id
+                    ? "border-zinc-600 bg-zinc-800 font-semibold text-white"
+                    : "border-zinc-800 text-zinc-400 hover:text-white"
+                }`}
+              >
+                {t(page.labelKey)}
+              </button>
+            ))}
+            <button
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="rounded-full border border-dashed border-zinc-700 px-3.5 py-1.5 text-sm text-zinc-400 hover:text-white"
+            >
+              {t("nav.advanced")} {showAdvanced ? "▾" : "▸"}
+            </button>
+          </div>
+          {showAdvanced && (
+          <div className="mt-3 flex flex-wrap gap-4 border-t border-zinc-800/60 pt-3">
+            {ADVANCED_SECTIONS.map((s) => (
               <div key={s.id} className="min-w-36">
                 <button
                   onClick={() => toggle(s.id)}
@@ -225,9 +264,10 @@ function AppInner() {
               </div>
             ))}
           </div>
+          )}
         </nav>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">
+      <main key={adminKey} className="mx-auto max-w-6xl px-4 py-8">
         {tab === "home" && <Home />}
         {tab === "onboarding" && <Onboarding />}
         {tab === "analytics" && <Analytics />}

@@ -252,6 +252,7 @@ export const bn: Record<string, string> = {
   "nav.sessions": "সেশন",
   "nav.settings": "সেটিংস",
   "nav.skills": "স্কিল",
+  "nav.advanced": "অ্যাডভান্সড",
   "nav.translators": "ট্রান্সলেটর",
   "nav.usage": "ব্যবহার",
   "nav.webhooks": "ওয়েবহুক",
