@@ -173,6 +173,13 @@ export const api = {
   oauthAntigravityDisconnect: () =>
     req<{ connected: boolean }>("/api/oauth/antigravity/disconnect", { method: "POST" }),
   oauthStart: (id: string) => req<{ url: string }>(`/api/oauth/${id}/start`),
+  oauthTokenSave: (id: string, accessToken: string, refreshToken?: string) =>
+    req<{ ok: boolean; connected: boolean }>(`/api/oauth/${id}/token`, {
+      method: "POST",
+      body: JSON.stringify({ accessToken, refreshToken }),
+    }),
+  oauthTokenRemove: (id: string) =>
+    req<{ ok: boolean; connected: boolean }>(`/api/oauth/${id}/token`, { method: "DELETE" }),
   oauthComplete: (id: string, url: string) =>
     req<{ connected: boolean; email?: string | null }>(`/api/oauth/${id}/complete`, {
       method: "POST",
