@@ -493,9 +493,13 @@ The Media page (Image / Audio / Video generation tester) previously
 sent requests with no model, so the gateway silently picked its
 default media provider. It now has a per-tab model picker:
 
-- Models load from GET /v1/models with the pasted gateway key and are
-  filtered per tab with the same capability regexes as the Models
-  page (image / TTS / video), shown as provider:model ids.
+- Models load from the dashboard catalog (GET /api/catalog — the
+  dashboard's own login, no gateway key needed; /v1/models with the
+  pasted gateway key is the fallback) and are filtered per tab with
+  the same capability regexes as the Models page (image / TTS /
+  video), shown as provider:model ids. Load failures are shown in
+  the UI instead of a silently empty picker (an admin key pasted as
+  the gateway key 401s /v1/models — the original bug report).
 - "Auto (gateway default)" preserves the old behavior (no model
   field sent); picking a model pins the request to provider:model.
 - The selection is remembered per tab in localStorage

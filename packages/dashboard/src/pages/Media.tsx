@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
 import { Tabs } from "../components/Tabs";
+import { api } from "../api";
 
 const GW_KEY = "llmswitch_gateway_key";
 
@@ -33,6 +34,23 @@ async function postV1(path: string, gwKey: string, body: unknown): Promise<{ ok:
     return { ok: res.ok, text: text.slice(0, 2000) };
   } catch (e) {
     return { ok: false, text: String(e) };
+  }
+}
+
+// Primary picker source: the dashboard catalog (uses the dashboard's own
+// session/admin auth — no gateway key needed). Connected + enabled
+// providers only, flattened to "provider:model" ids.
+async function listCatalogModels(): Promise<string[]> {
+  try {
+    const entries = await api.catalog();
+    const ids: string[] = [];
+    for (const e of entries) {
+      if (!e.connected || !e.enabled) continue;
+      for (const m of e.models) ids.push(`${e.id}:${m}`);
+    }
+    return [...new Set(ids)];
+  } catch {
+    return [];
   }
 }
 
@@ -74,6 +92,7 @@ export default function Media() {
   const [result, setResult] = useState<{ ok: boolean; text: string; img?: string } | null>(null);
   const [allModels, setAllModels] = useState<string[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [sel, setSel] = useState<Record<Kind, string>>(() => {
     const base: Record<Kind, string> = { image: "", audio: "", video: "" };
     try {
@@ -83,22 +102,39 @@ export default function Media() {
     return base;
   });
 
+  // Load the picker list once from the dashboard catalog; if that comes
+  // back empty, fall back to /v1/models with the pasted gateway key.
   useEffect(() => {
-    if (!key) {
-      setAllModels([]);
-      setModelsLoaded(false);
-      return;
-    }
     let live = true;
-    void listModels(key).then((ids) => {
+    void listCatalogModels().then((ids) => {
       if (!live) return;
-      setAllModels(ids);
+      if (ids.length > 0) {
+        setAllModels(ids);
+        setLoadFailed(false);
+      } else {
+        setLoadFailed(true);
+      }
       setModelsLoaded(true);
     });
     return () => {
       live = false;
     };
-  }, [key]);
+  }, []);
+
+  useEffect(() => {
+    if (!modelsLoaded || allModels.length > 0 || !key) return;
+    let live = true;
+    void listModels(key).then((ids) => {
+      if (!live) return;
+      if (ids.length > 0) {
+        setAllModels(ids);
+        setLoadFailed(false);
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [key, modelsLoaded, allModels.length]);
 
   const pick = (kind: Kind, v: string) => {
     setSel((s) => {
@@ -180,17 +216,17 @@ export default function Media() {
           <span className="mb-1 block text-zinc-400">
             Model{" "}
             <span className="text-zinc-500">
-              {!key
-                ? "— paste a gateway key above to load models"
-                : modelsLoaded
-                  ? `— ${tabModels.length} ${tab} model${tabModels.length === 1 ? "" : "s"} available`
-                  : "— loading…"}
+              {!modelsLoaded
+                ? "— loading…"
+                : loadFailed
+                  ? "— could not load models; check your dashboard login, or paste a valid gateway key (lsk_…) above"
+                  : `— ${tabModels.length} ${tab} model${tabModels.length === 1 ? "" : "s"} available`}
             </span>
           </span>
           <select
             value={model}
             onChange={(e) => pick(tab, e.target.value)}
-            disabled={!key}
+            disabled={!modelsLoaded}
             className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-50"
           >
             <option value="">Auto (gateway default)</option>
