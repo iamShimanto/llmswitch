@@ -101,6 +101,10 @@ function Wizard({
   const [refPick, setRefPick] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [searchMode, setSearchMode] = useState<"steps" | "global">("steps");
+  const [providerQuery, setProviderQuery] = useState("");
+  const [modelQuery, setModelQuery] = useState("");
+  const [globalQuery, setGlobalQuery] = useState("");
 
   const set = (p: Partial<WizardState>) => setW((s) => ({ ...s, ...p }));
   const setDraft = (p: Partial<StepDraft>) => setW((s) => ({ ...s, draft: { ...s.draft, ...p } }));
@@ -205,7 +209,9 @@ function Wizard({
           <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4">
             {stages.map((s, i) => {
               const locked = i > 0 && !stageDone.slice(0, i).every(Boolean);
-              const state = i === stage ? "current" : stageDone[i] ? "done" : locked ? "locked" : "todo";
+              const isDone =
+                (i === 0 && basicsDone) || (i === 1 && stepsDone) || (i === 2 && stage > 2);
+              const state = i === stage ? "current" : isDone ? "done" : locked ? "locked" : "todo";
               return (
                 <button
                   key={s.title}
@@ -255,41 +261,156 @@ function Wizard({
 
           {stage === 1 && (
             <div>
-              <h3 className="mb-1 font-semibold">Build a Combo</h3>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-semibold">Build a Combo</h3>
+                <span className="text-xs text-amber-400">Browse catalog above for auto/* templates</span>
+              </div>
               <p className="mb-3 text-xs text-zinc-500">
                 Build each step in order: provider, model, then account. The same provider
                 and model can repeat across different accounts.
               </p>
-              <label className="mb-1 block text-xs font-medium text-zinc-400">1. PROVIDER</label>
-              <select
-                value={w.draft.providerId}
-                onChange={(e) => setDraft({ providerId: e.target.value, model: "", accountId: "" })}
-                className={`${input} mb-3 w-full`}
-              >
-                <option value="">Select provider</option>
-                {catalog.map((c) => {
-                  const n = accountsOf(c.id).length;
-                  return (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {n > 0 ? ` (${n} accts)` : ""}
-                      {c.connected ? "" : " (not connected)"}
-                    </option>
-                  );
-                })}
-              </select>
-              <label className="mb-1 block text-xs font-medium text-zinc-400">2. MODEL</label>
-              <select
-                value={w.draft.model}
-                onChange={(e) => setDraft({ model: e.target.value })}
-                disabled={!w.draft.providerId}
-                className={`${input} mb-3 w-full`}
-              >
-                <option value="">{w.draft.providerId ? "Select model" : "Pick provider first"}</option>
-                {modelsOf(w.draft.providerId).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              {/* Search mode toggle (OmniRoute-style) */}
+              <div className="mb-4 grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setSearchMode("steps")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    searchMode === "steps"
+                      ? "border-amber-600/60 bg-amber-950/30 text-amber-200"
+                      : "border-zinc-800 hover:bg-zinc-800"
+                  }`}
+                >
+                  Step by step (Provider → Model)
+                </button>
+                <button
+                  onClick={() => setSearchMode("global")}
+                  className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                    searchMode === "global"
+                      ? "border-amber-600/60 bg-amber-950/30 text-amber-200"
+                      : "border-zinc-800 hover:bg-zinc-800"
+                  }`}
+                >
+                  🔍 Global model search
+                </button>
+              </div>
+
+              {searchMode === "steps" ? (
+                <>
+                  <label className="mb-1 block text-xs font-medium text-zinc-400">1. PROVIDER</label>
+                  <input
+                    value={providerQuery}
+                    onChange={(e) => setProviderQuery(e.target.value)}
+                    placeholder="🔍 Search providers…"
+                    className={`${input} mb-2 w-full`}
+                  />
+                  <select
+                    value={w.draft.providerId}
+                    onChange={(e) => {
+                      setDraft({ providerId: e.target.value, model: "", accountId: "" });
+                      setModelQuery("");
+                    }}
+                    className={`${input} mb-3 w-full`}
+                  >
+                    <option value="">Select provider</option>
+                    {catalog
+                      .filter((c) => {
+                        const q = providerQuery.trim().toLowerCase();
+                        return !q || c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q);
+                      })
+                      .map((c) => {
+                        const n = accountsOf(c.id).length;
+                        return (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                            {n > 0 ? ` (${n} accts)` : ""}
+                            {c.connected ? "" : " (not connected)"}
+                          </option>
+                        );
+                      })}
+                  </select>
+                  <label className="mb-1 block text-xs font-medium text-zinc-400">2. MODEL</label>
+                  <input
+                    value={modelQuery}
+                    onChange={(e) => setModelQuery(e.target.value)}
+                    placeholder="🔍 Search models…"
+                    disabled={!w.draft.providerId}
+                    className={`${input} mb-2 w-full disabled:opacity-50`}
+                  />
+                  <select
+                    value={w.draft.model}
+                    onChange={(e) => setDraft({ model: e.target.value })}
+                    disabled={!w.draft.providerId}
+                    className={`${input} mb-3 w-full`}
+                  >
+                    <option value="">{w.draft.providerId ? "Select model" : "Pick provider first"}</option>
+                    {modelsOf(w.draft.providerId)
+                      .filter((m) => {
+                        const q = modelQuery.trim().toLowerCase();
+                        return !q || m.toLowerCase().includes(q);
+                      })
+                      .map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                  </select>
+                </>
+              ) : (
+                <>
+                  <label className="mb-1 block text-xs font-medium text-zinc-400">
+                    SEARCH ALL MODELS (EVERY PROVIDER)
+                  </label>
+                  <input
+                    value={globalQuery}
+                    onChange={(e) => setGlobalQuery(e.target.value)}
+                    placeholder="🔍 e.g. claude, gpt-5, flash, llama…"
+                    className={`${input} mb-2 w-full`}
+                  />
+                  <div className="mb-3 max-h-56 overflow-y-auto rounded-lg border border-zinc-800">
+                    {(() => {
+                      const q = globalQuery.trim().toLowerCase();
+                      const hits: Array<{ pid: string; pname: string; model: string; connected: boolean }> = [];
+                      for (const c of catalog) {
+                        for (const m of c.models) {
+                          if (
+                            !q ||
+                            m.toLowerCase().includes(q) ||
+                            c.name.toLowerCase().includes(q) ||
+                            c.id.toLowerCase().includes(q)
+                          ) {
+                            hits.push({ pid: c.id, pname: c.name, model: m, connected: c.connected });
+                          }
+                          if (hits.length >= 60) break;
+                        }
+                        if (hits.length >= 60) break;
+                      }
+                      if (hits.length === 0) {
+                        return <p className="px-3 py-2 text-sm text-zinc-500">No models match.</p>;
+                      }
+                      return hits.map((h) => {
+                        const active = w.draft.providerId === h.pid && w.draft.model === h.model;
+                        return (
+                          <button
+                            key={`${h.pid}:${h.model}`}
+                            onClick={() => setDraft({ providerId: h.pid, model: h.model, accountId: "" })}
+                            className={`flex w-full items-center justify-between gap-2 border-b border-zinc-800/60 px-3 py-2 text-left last:border-0 ${
+                              active ? "bg-amber-950/40" : "hover:bg-zinc-800"
+                            }`}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate font-mono text-xs">
+                                {h.pname}/{h.model}
+                              </span>
+                              {!h.connected && (
+                                <span className="text-[10px] text-zinc-500">not connected</span>
+                              )}
+                            </span>
+                            {active && <span className="shrink-0 text-amber-300">✓</span>}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+                </>
+              )}
+
               <label className="mb-1 block text-xs font-medium text-zinc-400">3. ACCOUNT</label>
               <select
                 value={w.draft.accountId}
@@ -301,6 +422,14 @@ function Wizard({
                   <option key={a.id} value={a.id}>{a.label}</option>
                 ))}
               </select>
+              {w.draft.providerId && w.draft.model && (
+                <p className="mb-3 rounded-lg border border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+                  PREVIEW{" "}
+                  <span className="block font-mono text-sm text-zinc-200">
+                    {providerName(w.draft.providerId)}/{w.draft.model} · {accountLabel(w.draft.accountId || null)}
+                  </span>
+                </p>
+              )}
               <button
                 onClick={addStep}
                 disabled={!w.draft.providerId || !w.draft.model}
