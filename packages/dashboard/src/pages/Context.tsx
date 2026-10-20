@@ -36,7 +36,7 @@ const ENGINES: Engine[] = [
     previewMode: "caveman",
     previewNote: "No dedicated Aggressive engine on this gateway — previewed via Caveman (the aggressive pass).",
     description:
-      "OmniRoute-style aggressive mode: maximum token removal. On LLMSwitch this maps to the Caveman pass, which is the aggressive slimming engine.",
+      "Aggressive mode: maximum token removal. Maps to the Caveman pass — LLMSwitch's aggressive slimming engine.",
   },
   {
     id: "lite",
@@ -44,7 +44,7 @@ const ENGINES: Engine[] = [
     previewMode: "rtk",
     previewNote: "No dedicated Lite engine on this gateway — previewed via RTK (the lightweight dedup pass).",
     description:
-      "OmniRoute-style lite mode: cheap structural cleanup only. On LLMSwitch this maps to the RTK pass.",
+      "Lite mode: cheap structural cleanup only. Maps to the RTK pass.",
   },
   {
     id: "ultra",
@@ -52,7 +52,7 @@ const ENGINES: Engine[] = [
     previewMode: "stacked",
     previewNote: "No dedicated Ultra engine on this gateway — previewed via Stacked (Caveman + RTK).",
     description:
-      "OmniRoute-style ultra mode: all passes combined. On LLMSwitch this maps to Stacked (Caveman + RTK).",
+      "Ultra mode: all compression passes combined. Maps to Stacked (Caveman + RTK).",
   },
   {
     id: "session-dedup",
