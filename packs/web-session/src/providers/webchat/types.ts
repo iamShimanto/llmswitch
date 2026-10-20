@@ -48,6 +48,13 @@ export interface WebChatDriver {
   chatStream(model: string, messages: ChatMessage[]): AsyncGenerator<string>;
 }
 
+export interface WebChatDriverOpts {
+  /** Session-carried access token (Meta AI ecto1:… for muse-spark-web). */
+  accessToken?: string;
+  /** WebSocket constructor override (drivers that speak WS; tests). */
+  wsCtor?: unknown;
+}
+
 export type WebChatDriverCtor = new (
   jar: CookieJar,
   fetchFn?: typeof fetch,

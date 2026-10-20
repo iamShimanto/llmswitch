@@ -18,6 +18,7 @@ const PROVIDERS = [
   ["poe", "Poe", "poe.com"],
   ["venice-web", "Venice Web", "venice.ai"],
   ["you-com-web", "You.com Web", "you.com"],
+  ["muse-spark-web", "Muse Spark (Meta AI)", "meta.ai"],
 ];
 
 const $ = (id) => document.getElementById(id);
@@ -74,6 +75,21 @@ async function connect() {
       return;
     }
     const header = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    // Meta AI additionally needs the short-lived ecto1 access token embedded
+    // in the meta.ai page HTML. Fetch it in THIS browser (logged in, no JS
+    // challenge) and ship it with the session.
+    let accessToken;
+    if (providerId === "muse-spark-web") {
+      try {
+        setStatus("Grabbing the Meta AI access token…");
+        const page = await fetch("https://www.meta.ai/", { credentials: "include" });
+        const html = await page.text();
+        const m = html.match(/accessToken[\\"]+:\s*[\\"]+ecto1:([A-Za-z0-9_-]+)[\\"]+/);
+        if (m) accessToken = "ecto1:" + m[1];
+      } catch {
+        /* token stays unset — the gateway will explain on first use */
+      }
+    }
     const res = await fetch(gateway + "/api/sessions/import", {
       method: "POST",
       headers: {
@@ -81,7 +97,12 @@ async function connect() {
         "x-admin-key": token,
         "x-dashboard-session": token,
       },
-      body: JSON.stringify({ provider: providerId, cookies: header, cookieDomain: domain }),
+      body: JSON.stringify({
+        provider: providerId,
+        cookies: header,
+        cookieDomain: domain,
+        ...(accessToken ? { accessToken } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.connected) {

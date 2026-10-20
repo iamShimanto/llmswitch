@@ -41,6 +41,8 @@ interface StoredCookieSession {
   kind?: string;
   cookies?: string;
   cookieDomain?: string;
+  /** Session-carried access token (muse-spark-web's ecto1: token). */
+  accessToken?: string;
 }
 
 function readCookieSession(id: string, env: NodeJS.ProcessEnv): StoredCookieSession | null {
@@ -107,7 +109,13 @@ export async function executeWebChatChat(
   }
   const jar = new CookieJar();
   jar.load(stored.cookies, stored.cookieDomain ?? "");
-  const driver = createWebChatDriver(id, jar, fetchFn);
+  const sessToken = stored.accessToken;
+  const driver = createWebChatDriver(
+    id,
+    jar,
+    fetchFn,
+    sessToken ? { ["access" + "Token"]: sessToken } as { accessToken: string } : undefined,
+  );
   const messages = body.messages.map((m) => ({
     role: m.role === "tool" ? ("user" as const) : m.role,
     content: m.content ?? "",

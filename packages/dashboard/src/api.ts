@@ -182,10 +182,10 @@ export const api = {
       `/api/analytics/summary?days=${days}${keyId ? `&key=${encodeURIComponent(keyId)}` : ""}`,
     ),
   sessions: () => req<{ sessions: SessionMeta[] }>("/api/sessions"),
-  importSession: (provider: string, cookies: string, cookieDomain?: string) =>
+  importSession: (provider: string, cookies: string, cookieDomain?: string, accessToken?: string) =>
     req<{ ok: boolean; connected: boolean }>("/api/sessions/import", {
       method: "POST",
-      body: JSON.stringify({ provider, cookies, cookieDomain }),
+      body: JSON.stringify({ provider, cookies, cookieDomain, ...(accessToken ? { accessToken } : {}) }),
     }),
   deleteSession: (name: string) =>
     req<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" }),

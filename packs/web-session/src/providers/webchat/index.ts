@@ -24,6 +24,7 @@ import { DeepAiDriver } from "./deepai.js";
 import { ManusDriver } from "./manus.js";
 import { VeniceWebDriver } from "./venice-web.js";
 import { YouComWebDriver } from "./you-com-web.js";
+import { MuseSparkWebDriver } from "./museSpark.js";
 
 export const WEBCHAT_DRIVERS: Record<string, WebChatDriverCtor> = {
   "chatgpt-web": ChatGptWebDriver,
@@ -42,6 +43,7 @@ export const WEBCHAT_DRIVERS: Record<string, WebChatDriverCtor> = {
   manus: ManusDriver,
   "venice-web": VeniceWebDriver,
   "you-com-web": YouComWebDriver,
+  "muse-spark-web": MuseSparkWebDriver,
 };
 
 export const WEBCHAT_DRIVER_IDS = Object.keys(WEBCHAT_DRIVERS);
@@ -50,13 +52,26 @@ export function isWebChatProvider(id: string): boolean {
   return id in WEBCHAT_DRIVERS;
 }
 
+/** Drivers whose constructor accepts WebChatDriverOpts as the 3rd arg. */
+const OPT_AWARE_DRIVERS = new Set(["muse-spark-web"]);
+
 export function createWebChatDriver(
   id: string,
   jar: CookieJar,
   fetchFn: typeof fetch = fetch,
+  opts?: import("./types.js").WebChatDriverOpts,
 ): WebChatDriver {
   const Ctor = WEBCHAT_DRIVERS[id];
   if (!Ctor) throw new Error(`unknown web-chat provider: ${id}`);
+  // Only opt-aware drivers receive opts — other drivers use their own
+  // 3rd constructor parameter for unrelated seams (e.g. socket factories).
+  if (opts && OPT_AWARE_DRIVERS.has(id)) {
+    return new (Ctor as new (
+      jar: CookieJar,
+      fetchFn?: typeof fetch,
+      opts?: import("./types.js").WebChatDriverOpts,
+    ) => WebChatDriver)(jar, fetchFn, opts);
+  }
   return new Ctor(jar, fetchFn);
 }
 
