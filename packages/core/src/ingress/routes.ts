@@ -15,7 +15,8 @@ import { redactEnabled, redactPii } from "../privacy/redact.js";
 import { fanout } from "../playground/index.js";
 import { SkillRegistry } from "../skills/index.js";
 import { runCombo, validateCombo, type Combo } from "../combos/index.js";
-import { anthropicHeaders } from "../translator/anthropic.js";
+import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
+import { WEBCHAT_PROVIDER_IDS } from "../executor/webchat.js";
 import type { AppConfig } from "../config.js";
 import type { ResolvedProvider } from "../providers/types.js";
 import { createRouter, type Router } from "../router/index.js";
@@ -300,6 +301,76 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
   });
 
+  // ---- Anthropic Messages API (ingress: Claude Code / Anthropic SDK clients) ----
+  app.post("/v1/messages", async (req: Request, res: Response) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body.model !== "string" || !body.model) {
+      res.status(400).json({ type: "error", error: { type: "invalid_request_error", message: "model is required" } });
+      return;
+    }
+    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+      res.status(400).json({ type: "error", error: { type: "invalid_request_error", message: "messages is required" } });
+      return;
+    }
+    const chatBody = fromAnthropicRequest(body);
+    const strategy: StrategyName = effStrategy();
+    const msgId = `msg_${randomBytes(12).toString("hex")}`;
+    try {
+      const result = await router.route(chatBody, { strategy });
+      if (result.stream) {
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        const write = (type: string, data: unknown) =>
+          res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+        write("message_start", {
+          type: "message_start",
+          message: {
+            id: msgId, type: "message", role: "assistant", model: result.model,
+            content: [], stop_reason: null, stop_sequence: null,
+            usage: { input_tokens: 0, output_tokens: 0 },
+          },
+        });
+        write("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+        let outChunks = 0;
+        for await (const chunk of result.stream) {
+          const delta = (chunk as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content ?? "";
+          if (delta) {
+            outChunks++;
+            write("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: delta } });
+          }
+        }
+        write("content_block_stop", { type: "content_block_stop", index: 0 });
+        write("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: outChunks } });
+        write("message_stop", { type: "message_stop" });
+        res.end();
+        store.logUsage({
+          keyId: req.apiKey?.id ?? null, provider: result.providerId, model: result.model,
+          promptTokens: 0, completionTokens: outChunks, latencyMs: result.latencyMs, status: "ok", costUsd: 0,
+        });
+        return;
+      }
+      const r = result.response!;
+      const cost = costUsd(result.providerId, result.model, r.usage.prompt_tokens, r.usage.completion_tokens);
+      store.logUsage({
+        keyId: req.apiKey?.id ?? null, provider: result.providerId, model: result.model,
+        promptTokens: r.usage.prompt_tokens, completionTokens: r.usage.completion_tokens,
+        latencyMs: result.latencyMs, status: "ok", costUsd: cost,
+      });
+      res.json(toAnthropicResponse(r, body.model));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = /no providers connected/.test(message) ? 503 : 502;
+      store.logUsage({
+        keyId: req.apiKey?.id ?? null, provider: "-", model: String(body.model),
+        promptTokens: 0, completionTokens: 0, latencyMs: 0, status: "error",
+      });
+      res.status(status).json({ type: "error", error: { type: "api_error", message } });
+    }
+  });
+
   // ---- OpenAI Responses API ----
   app.post("/v1/responses", async (req: Request, res: Response) => {
     const model = typeof req.body?.model === "string" ? req.body.model : "";
@@ -427,17 +498,33 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   // ---- Media APIs (embeddings / images / audio): direct provider passthrough ----
+  /**
+   * Media/passthrough endpoints need a REAL OpenAI-wire API provider. Chat-only
+   * web transports (DuckDuckGo AI Chat + the cookie web-session providers) run
+   * custom executors — a raw HTTP passthrough to their base URL returns the
+   * site's HTML homepage, so they must never be selected here.
+   */
+  function isMediaCapable(p: ResolvedProvider): boolean {
+    return (
+      p.wireFormat === "openai" &&
+      p.authType !== "cookie" &&
+      p.id !== "duckduckgo-web" &&
+      !WEBCHAT_PROVIDER_IDS.has(p.id)
+    );
+  }
+
   function resolveMediaProvider(modelStr: string): ResolvedProvider | null {
     if (!modelStr) return null;
-    if (modelStr === "auto") return providers[0] ?? null;
+    const capable = providers.filter(isMediaCapable);
+    if (modelStr === "auto") return capable[0] ?? null;
     const colon = modelStr.indexOf(":");
     if (colon > 0) {
       const p = providers.find((x) => x.id === modelStr.slice(0, colon));
       if (p) return p;
     }
     return (
-      providers.find((x) => x.models.includes(modelStr)) ??
-      providers[0] ??
+      capable.find((x) => x.models.includes(modelStr)) ??
+      capable[0] ??
       null
     );
   }
@@ -468,6 +555,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         signal: AbortSignal.timeout(120_000),
       });
       const text = await upstream.text();
+      const uct = upstream.headers.get("content-type") ?? "";
+      if (uct.includes("text/html")) {
+        res.status(502).json({
+          error: { message: `provider ${p.id} does not support this endpoint (returned an HTML page)`, type: "upstream_error" },
+        });
+        return;
+      }
       res.status(upstream.status);
       const ct = upstream.headers.get("content-type") ?? "application/json";
       res.setHeader("content-type", ct);
@@ -500,8 +594,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ---- Files API (passthrough) ----
   function mediaProviderOr503(res: Response): ResolvedProvider | null {
-    const p = providers[0] ?? null;
-    if (!p || p.wireFormat !== "openai") {
+    const p = providers.find(isMediaCapable) ?? null;
+    if (!p) {
       res.status(503).json({ error: { message: "no suitable provider connected", type: "upstream_error" } });
       return null;
     }
@@ -536,8 +630,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         signal: AbortSignal.timeout(300_000),
       });
       const buf = Buffer.from(await upstream.arrayBuffer());
+      const pct = upstream.headers.get("content-type") ?? "";
+      if (pct.includes("text/html")) {
+        res.status(502).json({
+          error: { message: `provider ${p.id} does not support this endpoint (returned an HTML page)`, type: "upstream_error" },
+        });
+        return;
+      }
       res.status(upstream.status);
-      res.setHeader("content-type", upstream.headers.get("content-type") ?? "application/json");
+      res.setHeader("content-type", pct || "application/json");
       res.send(buf);
     } catch (err) {
       res.status(502).json({ error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" } });
@@ -918,22 +1019,30 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         signal: AbortSignal.timeout(120_000),
       });
       const buf = Buffer.from(await upstream.arrayBuffer());
+      const tct = upstream.headers.get("content-type") ?? "";
+      if (tct.includes("text/html")) {
+        res.status(502).json({
+          error: { message: `provider ${p.id} does not support speech (returned an HTML page)`, type: "upstream_error" },
+        });
+        return;
+      }
       res.status(upstream.status);
-      res.setHeader("content-type", upstream.headers.get("content-type") ?? "audio/mpeg");
+      res.setHeader("content-type", tct || "audio/mpeg");
       res.send(buf);
     } catch (err) {
       res.status(502).json({ error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" } });
     }
   });
   app.get("/v1/voices", async (_req: Request, res: Response) => {
-    const p = providers[0];
-    if (p?.wireFormat === "openai") {
+    const p = providers.find(isMediaCapable);
+    if (p) {
       try {
         const upstream = await fetch(`${p.baseUrl}/voices`, {
           headers: { authorization: `Bearer ${p.apiKey}` },
           signal: AbortSignal.timeout(15_000),
         });
-        if (upstream.ok) {
+        const uct = upstream.headers.get("content-type") ?? "";
+        if (upstream.ok && uct.includes("json")) {
           const text = await upstream.text();
           res.status(200).setHeader("content-type", "application/json").send(text);
           return;
@@ -1066,8 +1175,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         signal: AbortSignal.timeout(120_000),
       });
       const buf = Buffer.from(await upstream.arrayBuffer());
+      const tct = upstream.headers.get("content-type") ?? "";
+      if (tct.includes("text/html")) {
+        res.status(502).json({
+          error: { message: `provider ${p.id} does not support speech (returned an HTML page)`, type: "upstream_error" },
+        });
+        return;
+      }
       res.status(upstream.status);
-      res.setHeader("content-type", upstream.headers.get("content-type") ?? "audio/mpeg");
+      res.setHeader("content-type", tct || "audio/mpeg");
       res.send(buf);
     } catch (err) {
       res.status(502).json({ error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" } });

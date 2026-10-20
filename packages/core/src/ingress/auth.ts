@@ -44,7 +44,9 @@ export function createAuth(store: Store, limiter: RateLimiter) {
     if (req.path === "/healthz" || !req.path.startsWith("/v1/")) return next();
 
     const header = req.header("authorization") ?? "";
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    // Anthropic SDK / Claude Code send the key as x-api-key instead of Bearer.
+    const token = bearer || (req.header("x-api-key")?.trim() ?? "");
     if (!token) {
       res.status(401).json({ error: { message: "missing bearer token", type: "auth_error" } });
       return;

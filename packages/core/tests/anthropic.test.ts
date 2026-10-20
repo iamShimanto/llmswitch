@@ -47,3 +47,49 @@ describe("anthropic translator", () => {
     expect(anthropicStreamEvent({ type: "message_start" }, "m")).toBeNull();
   });
 });
+
+describe("anthropic ingress (Messages API)", () => {
+  it("converts an Anthropic request to an OpenAI chat request", async () => {
+    const { fromAnthropicRequest } = await import("../src/translator/anthropic.js");
+    const out = fromAnthropicRequest({
+      model: "auto",
+      max_tokens: 256,
+      system: "You are terse.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "Hello" }] },
+        { role: "assistant", content: "Hi!" },
+        { role: "user", content: "Again" },
+      ],
+    });
+    expect(out.model).toBe("auto");
+    expect(out.max_tokens).toBe(256);
+    expect(out.messages[0]).toEqual({ role: "system", content: "You are terse." });
+    expect(out.messages[1]).toEqual({ role: "user", content: "Hello" });
+    expect(out.messages[2]).toEqual({ role: "assistant", content: "Hi!" });
+  });
+
+  it("converts an OpenAI response to an Anthropic message", async () => {
+    const { toAnthropicResponse } = await import("../src/translator/anthropic.js");
+    const out = toAnthropicResponse(
+      {
+        id: "chatcmpl-9",
+        model: "kilo-auto/free",
+        choices: [{ index: 0, message: { role: "assistant", content: "Yo" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+      },
+      "auto",
+    );
+    expect(out.type).toBe("message");
+    expect(out.id).toBe("msg_9");
+    expect(out.content).toEqual([{ type: "text", text: "Yo" }]);
+    expect(out.stop_reason).toBe("end_turn");
+    expect(out.usage).toEqual({ input_tokens: 7, output_tokens: 3 });
+  });
+
+  it("maps length finish to max_tokens stop_reason", async () => {
+    const { toAnthropicStopReason } = await import("../src/translator/anthropic.js");
+    expect(toAnthropicStopReason("length")).toBe("max_tokens");
+    expect(toAnthropicStopReason("tool_calls")).toBe("tool_use");
+    expect(toAnthropicStopReason("stop")).toBe("end_turn");
+  });
+});
