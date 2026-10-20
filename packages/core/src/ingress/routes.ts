@@ -2214,6 +2214,11 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     calls: a.calls,
     errors: a.errors,
     lastError: a.lastError,
+    dailyCapUsd: a.dailyCapUsd,
+    spentTodayUsd:
+      a.dailyCapUsd != null
+        ? store.accountDailySpend(a.id, new Date().setUTCHours(0, 0, 0, 0))
+        : 0,
   });
 
   app.get("/api/accounts", (req: Request, res: Response) => {
@@ -2222,9 +2227,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.post("/api/accounts/:id", (req: Request, res: Response) => {
-    const patch: { label?: string; enabled?: boolean } = {};
+    const patch: { label?: string; enabled?: boolean; dailyCapUsd?: number | null } = {};
     if (typeof req.body?.label === "string" && req.body.label.trim()) patch.label = req.body.label.trim();
     if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
+    if (req.body?.dailyCapUsd === null) patch.dailyCapUsd = null;
+    else if (typeof req.body?.dailyCapUsd === "number" && req.body.dailyCapUsd > 0)
+      patch.dailyCapUsd = req.body.dailyCapUsd;
     const ok = store.updateAccount(req.params.id, patch);
     if (ok) {
       store.audit("provider.account_updated", req.params.id, JSON.stringify(patch));

@@ -116,6 +116,9 @@ export interface AccountHooks {
   strategy: (providerId: string) => AccountStrategy;
   stats: (providerId: string) => Array<{ id: string; calls: number }>;
   record: (accountId: string, ok: boolean, error?: string) => void;
+  /** Accounts whose daily spend cap is reached — excluded from rotation
+   *  for the rest of the UTC day (the default connection still serves). */
+  capped?: (providerId: string) => Set<string>;
 }
 
 /** First enabled rule matching a bare (unpinned) model name, if any. */
@@ -233,7 +236,11 @@ async function executeWithRotation(
   forceAccountId?: string,
 ): Promise<ExecuteResult> {
   const accountStrategy = hooks?.strategy(provider.id) ?? "round-robin";
+  const capped = hooks?.capped?.(provider.id) ?? new Set<string>();
   const sessionAccounts = (provider.accounts ?? []).filter((a) => a.kind === "session");
+  if (forceAccountId && capped.has(forceAccountId)) {
+    throw new Error(`account ${forceAccountId} on ${provider.id} reached its daily spend cap`);
+  }
   if (forceAccountId && sessionAccounts.some((a) => a.id === forceAccountId)) {
     // Pinned session account: try ONLY that account; its failure is final
     // for this provider so combo fall-through can move to the next target.
@@ -256,7 +263,9 @@ async function executeWithRotation(
     let modelErrTries = 0;
     const ordered = orderAccounts(
       provider.id,
-      sessionAccounts.map((a) => ({ id: a.id, calls: counts.get(a.id) ?? 0 })),
+      sessionAccounts
+        .filter((a) => !capped.has(a.id))
+        .map((a) => ({ id: a.id, calls: counts.get(a.id) ?? 0 })),
       accountStrategy,
     ).map((a) => a.id);
     const candidates: Array<string | null> = [...ordered, null];
@@ -288,6 +297,12 @@ async function executeWithRotation(
   }
 
   const tried = new Set<string>();
+  // Daily-capped API-key accounts: pre-exclude their keys from rotation.
+  if (capped.size > 0 && provider.keyAccounts) {
+    for (const [key, acctId] of provider.keyAccounts) {
+      if (capped.has(acctId)) tried.add(key);
+    }
+  }
   // Pinned API-key account: pre-exclude every other key in the pool.
   if (forceAccountId && provider.keyAccounts) {
     const pinnedKey = [...provider.keyAccounts.entries()].find(

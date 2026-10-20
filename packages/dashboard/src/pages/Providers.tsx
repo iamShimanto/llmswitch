@@ -131,6 +131,44 @@ function AccountsSection({ p, onChanged }: { p: ProviderInfo; onChanged: () => v
                 {a.lastUsedAt ? ` · last ${new Date(a.lastUsedAt).toLocaleString()}` : ""}
               </span>
               {a.lastError && <span className="w-full text-xs text-red-400/80">{a.lastError}</span>}
+              <span className="flex w-full flex-wrap items-center gap-2 text-xs text-zinc-500">
+                {a.dailyCapUsd != null ? (
+                  <>
+                    <span>
+                      Daily cap: <span className="text-zinc-300">${a.dailyCapUsd}</span> · spent today{" "}
+                      <span className={(a.spentTodayUsd ?? 0) >= a.dailyCapUsd ? "text-red-400" : "text-zinc-300"}>
+                        ${(a.spentTodayUsd ?? 0).toFixed(4)}
+                      </span>
+                      {(a.spentTodayUsd ?? 0) >= a.dailyCapUsd && (
+                        <span className="ml-1 rounded bg-red-900/60 px-1.5 py-px text-[10px] text-red-300">CAPPED TODAY</span>
+                      )}
+                    </span>
+                    <button
+                      onClick={async () => {
+                        await api.updateAccount(a.id, { dailyCapUsd: null });
+                        load();
+                      }}
+                      className="rounded border border-zinc-700 px-2 py-0.5 hover:bg-zinc-800"
+                    >
+                      Remove cap
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      const v = prompt("Daily spend cap for this account (USD, e.g. 1.50). Cancel = no change.");
+                      if (v == null) return;
+                      const n = Number(v);
+                      if (!Number.isFinite(n) || n <= 0) return;
+                      await api.updateAccount(a.id, { dailyCapUsd: n });
+                      load();
+                    }}
+                    className="rounded border border-zinc-700 px-2 py-0.5 hover:bg-zinc-800"
+                  >
+                    ＋ Daily cap
+                  </button>
+                )}
+              </span>
               <span className="ml-auto flex gap-2">
                 <button
                   onClick={() => toggle(a)}
