@@ -1819,6 +1819,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       store.audit("provider.models_discovered", p.id, `${found.length} models`);
       res.json({ provider: p.id, models: p.models });
     } catch (err) {
+      // Many providers (OAuth/Cloud Code/cookie/special) expose NO model
+      // listing endpoint — discovery there used to hard-fail with a 502,
+      // which looked like the gateway itself was down. Fall back to the
+      // provider's known models instead; only a provider with no known
+      // models at all still surfaces the upstream error.
+      if (p.models.length > 0) {
+        const prev = JSON.parse(store.getSetting(`discovered_models:${p.id}`) ?? "[]") as string[];
+        store.setSetting(
+          `discovered_models:${p.id}`,
+          JSON.stringify([...new Set([...prev, ...p.models])]),
+        );
+        res.json({ provider: p.id, models: p.models, note: "upstream listing unavailable — known models" });
+        return;
+      }
       res.status(502).json({
         error: { message: `discovery failed: ${err instanceof Error ? err.message : String(err)}`, type: "upstream_error" },
       });
