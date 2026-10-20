@@ -364,14 +364,17 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
   const connect = async () => {
     setBusy(true);
     setError("");
+    // Open the tab SYNCHRONOUSLY inside the click handler — after an await,
+    // mobile browsers treat window.open as a popup and block it, which made
+    // Connect look completely dead on phones.
+    const tab = window.open("about:blank", "_blank");
     try {
       const { url } = await api.oauthStart(cfg.id);
-      // New tab: on a local gateway the callback finishes there; on a
-      // remote gateway the browser lands on a dead localhost page and the
-      // user pastes that URL back here (see the paste box below).
-      window.open(url, "_blank", "noopener");
+      if (tab) tab.location.href = url;
+      else window.location.href = url; // popup blocked entirely: same-tab fallback
       setStarted(true);
     } catch (e) {
+      if (tab) tab.close();
       setError(String(e));
     } finally {
       setBusy(false);
