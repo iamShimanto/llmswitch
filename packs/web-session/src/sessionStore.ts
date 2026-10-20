@@ -36,7 +36,14 @@ export interface SavedSession {
 }
 
 export function sessionsDir(): string {
-  const dir = process.env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  // Must match the core's resolution (LLMSWITCH_SESSIONS_DIR → DATA_DIR →
+  // home). When these disagreed, OAuth sessions landed in the container's
+  // home dir: the OAuth status (pack) saw them but the provider registry
+  // (core, DATA_DIR) did not — providers showed connected on the OAuth card
+  // yet never appeared in the provider list, and sessions died on rebuild.
+  const dir =
+    process.env.LLMSWITCH_SESSIONS_DIR ??
+    (process.env.DATA_DIR ? join(process.env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   mkdirSync(dir, { recursive: true });
   return dir;
 }
