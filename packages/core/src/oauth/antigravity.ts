@@ -117,6 +117,43 @@ export function registerAntigravityOAuthRoutes(app: Express, deps: AntigravityOA
     }
   });
 
+  // ---- Manual completion (remote deployments) ----
+  // The provider's registered redirect is loopback (localhost), so when the
+  // gateway runs on a server the browser lands on a dead localhost page
+  // after consent. The user copies that full address-bar URL and pastes it
+  // here; we extract code+state and finish the same exchange server-side.
+  app.post("/api/oauth/antigravity/complete", async (req: Request, res: Response) => {
+    const raw = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    let code = "";
+    let state = typeof req.body?.state === "string" ? req.body.state : "";
+    try {
+      const u = new URL(raw);
+      code = u.searchParams.get("code") ?? "";
+      state = u.searchParams.get("state") ?? state;
+    } catch {
+      if (raw && !raw.includes("://")) code = raw;
+    }
+    const entry = consume(state || undefined);
+    if (!entry || !code) {
+      res.status(400).json({
+        error: {
+          message: "invalid or expired sign-in link — click Connect again and paste the full address-bar URL",
+          type: "bad_request",
+        },
+      });
+      return;
+    }
+    try {
+      const saved = await completeLogin(code, entry.redirectUri, fetchFn);
+      store?.audit("oauth.antigravity.connected", saved.email ?? saved.provider ?? "antigravity", "paste flow");
+      deps.onCredentialsChanged?.();
+      res.json({ connected: true, email: saved.email ?? null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: { message: message.slice(0, 200), type: "oauth_error" } });
+    }
+  });
+
   // ---- Status: metadata only, never token values ----
   app.get("/api/oauth/antigravity/status", (_req: Request, res: Response) => {
     const s = loadAntigravitySession();

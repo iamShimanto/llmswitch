@@ -173,6 +173,11 @@ export const api = {
   oauthAntigravityDisconnect: () =>
     req<{ connected: boolean }>("/api/oauth/antigravity/disconnect", { method: "POST" }),
   oauthStart: (id: string) => req<{ url: string }>(`/api/oauth/${id}/start`),
+  oauthComplete: (id: string, url: string) =>
+    req<{ connected: boolean; email?: string | null }>(`/api/oauth/${id}/complete`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
   oauthStatus: (id: string) => req<OAuthStatus>(`/api/oauth/${id}/status`),
   oauthDisconnect: (id: string) =>
     req<{ connected: boolean }>(`/api/oauth/${id}/disconnect`, { method: "POST" }),

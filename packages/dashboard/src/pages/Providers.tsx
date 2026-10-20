@@ -165,10 +165,18 @@ function ProviderDetail({
               {keyMsg && <p className="mt-2 text-sm text-red-400">{keyMsg}</p>}
             </>
           ) : p.authType === "oauth" ? (
-            <p className="text-sm text-zinc-400">
-              This provider connects with OAuth — use the Connect panel at the top of the
-              Providers page, then come back here to test its models.
-            </p>
+            ["antigravity", "claude", "codex"].includes(p.id) ? (
+              <p className="text-sm text-zinc-400">
+                This provider connects with OAuth — use the Connect panel at the top of the
+                Providers page, then come back here to test its models.
+              </p>
+            ) : (
+              <p className="text-sm text-zinc-400">
+                This provider signs in with a device/token flow on the machine running the
+                gateway (its login session is a local file). Sign in there, or import its
+                session JSON on the Sessions page — then it will show as connected here.
+              </p>
+            )
           ) : p.authType === "cookie" ? (
             <p className="text-sm text-zinc-400">
               This provider needs an imported browser session — import it from the
@@ -277,15 +285,40 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
     api.oauthStatus(cfg.id).then(setStatus).catch(() => setStatus(null));
   }, [cfg.id]);
 
+  const [started, setStarted] = useState(false);
+  const [pasteUrl, setPasteUrl] = useState("");
+  const [completing, setCompleting] = useState(false);
+
   const connect = async () => {
     setBusy(true);
     setError("");
     try {
       const { url } = await api.oauthStart(cfg.id);
-      window.location.href = url; // same tab: provider consent → callback → back
+      // New tab: on a local gateway the callback finishes there; on a
+      // remote gateway the browser lands on a dead localhost page and the
+      // user pastes that URL back here (see the paste box below).
+      window.open(url, "_blank", "noopener");
+      setStarted(true);
     } catch (e) {
       setError(String(e));
+    } finally {
       setBusy(false);
+    }
+  };
+
+  const completePaste = async () => {
+    setCompleting(true);
+    setError("");
+    try {
+      await api.oauthComplete(cfg.id, pasteUrl);
+      setPasteUrl("");
+      setStarted(false);
+      const s = await api.oauthStatus(cfg.id);
+      setStatus(s);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setCompleting(false);
     }
   };
 
@@ -349,6 +382,31 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
           )}
         </div>
       </div>
+      {started && !status.connected && (
+        <div className="mt-3 rounded-lg border border-dashed border-zinc-700 p-3">
+          <p className="text-xs text-zinc-400">
+            A sign-in tab opened. After you approve, your browser may land on a{" "}
+            <code className="rounded bg-zinc-800 px-1">localhost</code> page that fails to
+            load — that is expected on a remote gateway. Copy the <b>full address-bar URL</b>{" "}
+            from that tab and paste it here:
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              value={pasteUrl}
+              onChange={(e) => setPasteUrl(e.target.value)}
+              placeholder="http://localhost:6000/api/oauth/…/callback?code=…&state=…"
+              className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+            />
+            <button
+              onClick={completePaste}
+              disabled={completing || !pasteUrl.trim()}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {completing ? "Connecting…" : "Complete sign-in"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -370,6 +428,7 @@ export default function Providers() {
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
 
   const load = () => {
@@ -409,20 +468,25 @@ export default function Providers() {
   const q = query.trim().toLowerCase();
   const entries = [...catalog]
     .sort((a, b) => Number(b.connected) - Number(a.connected) || a.name.localeCompare(b.name))
-    .filter(
-      (c) =>
+    .filter((c) => {
+      if (filter === "connected" && !c.connected) return false;
+      if (filter === "disconnected" && c.connected) return false;
+      if (filter !== "all" && filter !== "connected" && filter !== "disconnected" && c.authType !== filter)
+        return false;
+      return (
         !q ||
         c.name.toLowerCase().includes(q) ||
         c.id.toLowerCase().includes(q) ||
-        c.models.some((m) => m.toLowerCase().includes(q)),
-    );
+        c.models.some((m) => m.toLowerCase().includes(q))
+      );
+    });
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">{t("nav.providers")}</h1>
       {error && <p className="mb-4 text-red-400">{error}</p>}
       <OAuthConnectPanel />
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -432,6 +496,31 @@ export default function Providers() {
         <p className="text-sm text-zinc-500">
           {providers.length} connected · {catalog.length} total
         </p>
+      </div>
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {(
+          [
+            ["all", "All"],
+            ["connected", "Connected"],
+            ["disconnected", "Not connected"],
+            ["api-key", "API key"],
+            ["oauth", "OAuth"],
+            ["none", "Keyless"],
+            ["cookie", "Cookie / web"],
+          ] as Array<[string, string]>
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setFilter(id)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              filter === id
+                ? "border-zinc-500 bg-zinc-800 font-semibold text-white"
+                : "border-zinc-800 text-zinc-400 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {entries.map((c) => {

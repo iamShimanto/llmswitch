@@ -143,6 +143,39 @@ export function registerProviderOAuthRoutes(app: Express, flow: ProviderOAuthFlo
     }
   });
 
+  // ---- Manual completion (remote deployments): see antigravity.ts ----
+  app.post(`/api/oauth/${flow.id}/complete`, async (req: Request, res: Response) => {
+    const raw = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    let code = "";
+    let state = typeof req.body?.state === "string" ? req.body.state : "";
+    try {
+      const u = new URL(raw);
+      code = u.searchParams.get("code") ?? "";
+      state = u.searchParams.get("state") ?? state;
+    } catch {
+      if (raw && !raw.includes("://")) code = raw;
+    }
+    const entry = consume(state || undefined);
+    if (!entry || !code) {
+      res.status(400).json({
+        error: {
+          message: "invalid or expired sign-in link — click Connect again and paste the full address-bar URL",
+          type: "bad_request",
+        },
+      });
+      return;
+    }
+    try {
+      const saved = await completeLogin(code, entry.redirectUri, entry.codeVerifier, fetchFn);
+      store?.audit(`oauth.${flow.id}.connected`, saved.email ?? saved.accountId ?? flow.id, "paste flow");
+      deps.onCredentialsChanged?.();
+      res.json({ connected: true, email: saved.email ?? null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: { message: message.slice(0, 200), type: "oauth_error" } });
+    }
+  });
+
   // ---- Status: metadata only, never token values ----
   app.get(`/api/oauth/${flow.id}/status`, (_req: Request, res: Response) => {
     const s = flow.loadSession();
