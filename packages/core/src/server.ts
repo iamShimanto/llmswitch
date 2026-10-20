@@ -46,7 +46,7 @@ export function createServer(
   // baseline security headers
   app.use((_req, res, next) => {
     res.setHeader("x-content-type-options", "nosniff");
-    res.setHeader("x-frame-options", "SAMEORIGIN");
+    res.setHeader("x-frame-options", "DENY");
     res.setHeader("referrer-policy", "no-referrer");
     next();
   });
