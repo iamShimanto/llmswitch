@@ -148,7 +148,14 @@ export default function Media() {
 
   const tabModels = allModels.filter((id) => {
     const modelPart = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
-    return KIND_MODEL_RE[tab].test(modelPart);
+    if (KIND_MODEL_RE[tab].test(modelPart)) return true;
+    // ChatGPT Web generates images through its chat turn (browser
+    // bridge), so its chat models belong on the Image tab too.
+    if (tab === "image") {
+      const providerPart = id.includes(":") ? id.slice(0, id.indexOf(":")) : "";
+      if (providerPart === "chatgpt-web" || providerPart === "chatgpt-web-free") return true;
+    }
+    return false;
   });
   const model = sel[tab] && tabModels.includes(sel[tab]) ? sel[tab] : "";
 

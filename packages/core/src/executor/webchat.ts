@@ -161,3 +161,50 @@ export async function executeWebChatChat(
   };
   return { response, providerId: id, model, latencyMs: Date.now() - started, quota: null };
 }
+
+/** Providers whose web driver can generate images (ChatGPT web, via the browser bridge). */
+export const WEBCHAT_IMAGE_PROVIDER_IDS: ReadonlySet<string> = new Set(["chatgpt-web", "chatgpt-web-free"]);
+
+/**
+ * Image generation through a web-chat driver (currently ChatGPT web via
+ * the browser bridge): build the driver from the imported cookie
+ * session and let it run an image turn. Returns base64 image bytes.
+ */
+export async function executeWebChatImage(
+  provider: ResolvedProvider,
+  prompt: string,
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 170_000,
+  env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
+): Promise<{ b64: string; mime: string; text?: string; latencyMs: number }> {
+  const id = provider.id;
+  const stored = readCookieSession(id, env, accountId);
+  if (!stored?.cookies) {
+    throw new UpstreamError(
+      "auth_error",
+      401,
+      `${id}: no cookie session — import your browser cookies first: llmswitch cookies ${id} --domain <site-domain>`,
+    );
+  }
+  const jar = new CookieJar();
+  jar.load(stored.cookies, stored.cookieDomain ?? "");
+  const sessToken = stored.accessToken;
+  const driver = createWebChatDriver(
+    id,
+    jar,
+    fetchFn,
+    sessToken ? { ["access" + "Token"]: sessToken } as { accessToken: string } : undefined,
+  );
+  if (typeof driver.generateImage !== "function") {
+    throw new UpstreamError("bad_request", 400, `${id}: this provider cannot generate images`);
+  }
+  const started = Date.now();
+  try {
+    await withTimeout(driver.bootstrap(), timeoutMs, id);
+    const img = await withTimeout(driver.generateImage(prompt), timeoutMs, id);
+    return { ...img, latencyMs: Date.now() - started };
+  } catch (err) {
+    throw toUpstreamError(id, err);
+  }
+}

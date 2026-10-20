@@ -46,6 +46,14 @@ export interface WebChatDriver {
   chat(model: string, messages: ChatMessage[]): Promise<string>;
   /** Streaming chat. Yields text deltas as they arrive. */
   chatStream(model: string, messages: ChatMessage[]): AsyncGenerator<string>;
+  /**
+   * Optional image generation (only drivers whose site can generate
+   * images — currently the ChatGPT web drivers, via the browser
+   * bridge). Returns the generated image as base64 plus any text the
+   * assistant replied with. Throws WebChatError when the site cannot
+   * or will not generate (e.g. a login is required).
+   */
+  generateImage?(prompt: string): Promise<{ b64: string; mime: string; text?: string }>;
 }
 
 export interface WebChatDriverOpts {
