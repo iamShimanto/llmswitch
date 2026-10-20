@@ -68,4 +68,59 @@ describe("ChatGPT browser bridge (CHATGPT_BRIDGE_URL)", () => {
       d.chat("gpt-5.6-luna-free", [{ role: "user", content: "hi" }]),
     ).rejects.toThrow(/browser bridge unreachable/);
   });
+
+  it("a chat turn that generated an image appends it as a markdown data URL", async () => {
+    process.env.CHATGPT_BRIDGE_URL = "http://bridge.test:6100";
+    const { fetchFn } = makeFetch((call) => {
+      if (call.url === "https://chatgpt.com/api/auth/session") return json({});
+      if (call.url.endsWith("/turn"))
+        return json({ ok: true, text: "Here you go", image: { b64: "QUJD", mime: "image/png" } });
+      throw new Error(`unexpected fetch: ${call.url}`);
+    });
+    const d = new ChatGptWebFreeDriver(new CookieJar(), fetchFn);
+    const text = await d.chat("gpt-5.6-luna-free", [{ role: "user", content: "draw a cat" }]);
+    expect(text).toContain("Here you go");
+    expect(text).toContain("![generated image](data:image/png;base64,QUJD)");
+  });
+
+  it("generateImage asks the bridge for an image turn and returns the bytes", async () => {
+    process.env.CHATGPT_BRIDGE_URL = "http://bridge.test:6100";
+    const { calls, fetchFn } = makeFetch((call) => {
+      if (call.url === "https://chatgpt.com/api/auth/session") return json({});
+      if (call.url.endsWith("/turn"))
+        return json({ ok: true, text: "", image: { b64: "AAAABBBB", mime: "image/jpeg" } });
+      throw new Error(`unexpected fetch: ${call.url}`);
+    });
+    const d = new ChatGptWebFreeDriver(new CookieJar(), fetchFn);
+    const img = await d.generateImage!("a red panda");
+    expect(img.b64).toBe("AAAABBBB");
+    expect(img.mime).toBe("image/jpeg");
+    const turn = calls.find((c) => c.url.endsWith("/turn"))!;
+    expect(turn.body.wantImage).toBe(true);
+    expect(turn.body.prompt).toBe("a red panda");
+  });
+
+  it("generateImage surfaces the assistant's refusal when no image comes back", async () => {
+    process.env.CHATGPT_BRIDGE_URL = "http://bridge.test:6100";
+    const { fetchFn } = makeFetch((call) => {
+      if (call.url === "https://chatgpt.com/api/auth/session") return json({});
+      if (call.url.endsWith("/turn"))
+        return json({ ok: true, text: "You need to log in to generate images." });
+      throw new Error(`unexpected fetch: ${call.url}`);
+    });
+    const d = new ChatGptWebFreeDriver(new CookieJar(), fetchFn);
+    await expect(d.generateImage!("a cat")).rejects.toThrow(
+      /did not generate an image — it replied: You need to log in/,
+    );
+  });
+
+  it("generateImage without the bridge configured is a clear error", async () => {
+    delete process.env.CHATGPT_BRIDGE_URL;
+    const { fetchFn } = makeFetch((call) => {
+      if (call.url === "https://chatgpt.com/api/auth/session") return json({});
+      throw new Error(`unexpected fetch: ${call.url}`);
+    });
+    const d = new ChatGptWebFreeDriver(new CookieJar(), fetchFn);
+    await expect(d.generateImage!("a cat")).rejects.toThrow(/needs the browser bridge/);
+  });
 });

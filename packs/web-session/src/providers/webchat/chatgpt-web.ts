@@ -369,14 +369,34 @@ export class ChatGptWebDriver implements WebChatDriver {
    * the plain-HTTP flow gets Turnstile-walled on.
    */
   protected async turnViaBridge(bridgeUrl: string, prompt: string): Promise<string> {
+    const r = await this.turnViaBridgeFull(bridgeUrl, prompt);
+    return r.text;
+  }
+
+  /**
+   * Full bridge turn: text plus, when ChatGPT generated an image during
+   * the turn, the image bytes the bridge captured from the page.
+   * `wantImage` makes the bridge wait for a still-rendering image
+   * instead of finishing at text stability.
+   */
+  protected async turnViaBridgeFull(
+    bridgeUrl: string,
+    prompt: string,
+    opts?: { wantImage?: boolean },
+  ): Promise<{ text: string; image?: { b64: string; mime: string } }> {
     const cookies = this.jar.headerFor(CONVERSATION_URL);
     let res: Response;
     try {
       res = await this.fetchFn(`${bridgeUrl.replace(/\/$/, "")}/turn`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt, cookies: cookies || undefined }),
-        signal: AbortSignal.timeout(150_000),
+        body: JSON.stringify({
+          prompt,
+          cookies: cookies || undefined,
+          wantImage: opts?.wantImage || undefined,
+          timeoutMs: opts?.wantImage ? 140_000 : undefined,
+        }),
+        signal: AbortSignal.timeout(opts?.wantImage ? 170_000 : 150_000),
       });
     } catch (err) {
       throw new WebChatError(
@@ -385,12 +405,45 @@ export class ChatGptWebDriver implements WebChatDriver {
       );
     }
     const data = (await res.json().catch(() => null)) as
-      | { ok?: boolean; text?: string; error?: string }
+      | { ok?: boolean; text?: string; image?: { b64?: string; mime?: string }; error?: string }
       | null;
-    if (!data?.ok || typeof data.text !== "string" || !data.text) {
+    if (!data?.ok) {
       throw new WebChatError(this.id, `browser bridge: ${data?.error ?? `HTTP ${res.status}`}`);
     }
-    return data.text;
+    const image = data.image?.b64
+      ? { b64: data.image.b64, mime: data.image.mime || "image/png" }
+      : undefined;
+    const text = typeof data.text === "string" ? data.text : "";
+    if (!text && !image) {
+      throw new WebChatError(this.id, `browser bridge: ${data?.error ?? `HTTP ${res.status}`}`);
+    }
+    return { text, image };
+  }
+
+  /**
+   * Image generation through the browser bridge: the prompt runs as a
+   * normal ChatGPT turn and the bridge captures the generated image
+   * from the rendered page. Needs a logged-in ChatGPT session for the
+   * site to actually generate — anonymously ChatGPT refuses, and that
+   * refusal text is surfaced in the error.
+   */
+  async generateImage(prompt: string): Promise<{ b64: string; mime: string; text?: string }> {
+    await this.bootstrap();
+    const bridgeUrl = (process.env.CHATGPT_BRIDGE_URL ?? "").trim();
+    if (!bridgeUrl) {
+      throw new WebChatError(
+        this.id,
+        "image generation needs the browser bridge (CHATGPT_BRIDGE_URL is not set on the gateway)",
+      );
+    }
+    const r = await this.turnViaBridgeFull(bridgeUrl, prompt, { wantImage: true });
+    if (!r.image) {
+      throw new WebChatError(
+        this.id,
+        `chatgpt did not generate an image${r.text ? ` — it replied: ${r.text.slice(0, 240)}` : ""}`,
+      );
+    }
+    return { b64: r.image.b64, mime: r.image.mime, text: r.text || undefined };
   }
 
   /** Run one conversation turn, yielding cumulative assistant-text snapshots. */
@@ -406,7 +459,16 @@ export class ChatGptWebDriver implements WebChatDriver {
     // the anti-abuse tokens are minted by the page itself.
     const bridgeUrl = (process.env.CHATGPT_BRIDGE_URL ?? "").trim();
     if (bridgeUrl) {
-      yield await this.turnViaBridge(bridgeUrl, prompt);
+      const r = await this.turnViaBridgeFull(bridgeUrl, prompt);
+      let out = r.text;
+      if (r.image) {
+        // Deliver the image inline as a markdown data URL — chat
+        // clients that render markdown show it; API consumers get the
+        // bytes either way.
+        const md = `![generated image](data:${r.image.mime};base64,${r.image.b64})`;
+        out = out ? `${out}\n\n${md}` : md;
+      }
+      yield out;
       return;
     }
 

@@ -505,3 +505,30 @@ default media provider. It now has a per-tab model picker:
 - The selection is remembered per tab in localStorage
   (llmswitch_media_model); a saved model that disappears from the
   list falls back to Auto.
+
+## ChatGPT Web image generation via the bridge (2026-10-21)
+
+ChatGPT's site can generate images, and the gateway can now return
+them — through the browser bridge, for the chatgpt-web /
+chatgpt-web-free providers:
+
+- Bridge: /turn accepts `wantImage`; the poll loop also scans the
+  rendered conversation for a generated image (estuary/oaiusercontent
+  /blob sources or a "Generated image" alt), downloads it in-page
+  (session cookies apply) and returns { b64, mime }. A still-loading
+  image keeps an image turn alive past text stability; plain text
+  turns capture an already-rendered image opportunistically.
+- Driver: WebChatDriver gains an optional generateImage(); the
+  ChatGPT drivers implement it via the bridge (the free driver
+  inherits it). Chat turns that produce an image append it to the
+  reply as a markdown data URL.
+- Core: POST /v1/images/generations with a pinned chatgpt-web*
+  model runs executeWebChatImage instead of the OpenAI-wire
+  passthrough, and answers in OpenAI images format ({ data:
+  [{ b64_json }] }). The route no longer hard-requires `model`
+  (missing = "auto", which also fixes the Media page's Auto mode).
+- Media page: the Image tab now lists the ChatGPT web models too.
+- Honest limit: image generation needs a LOGGED-IN ChatGPT session
+  — anonymously ChatGPT refuses, and the refusal text is surfaced
+  in the error. Import a logged-in session to use it.
+Pack suite: 235/235 (4 new bridge image tests). Core: 489/489.

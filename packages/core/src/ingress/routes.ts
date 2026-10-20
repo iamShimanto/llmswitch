@@ -27,7 +27,8 @@ import {
 import { SkillRegistry } from "../skills/index.js";
 import { runCombo, validateCombo, validateAnyCombo, type Combo } from "../combos/index.js";
 import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
-import { WEBCHAT_PROVIDER_IDS } from "../executor/webchat.js";
+import { WEBCHAT_PROVIDER_IDS, WEBCHAT_IMAGE_PROVIDER_IDS, executeWebChatImage } from "../executor/webchat.js";
+import { UpstreamError } from "../router/errors.js";
 import type { AppConfig } from "../config.js";
 import type { ResolvedProvider } from "../providers/types.js";
 import { createRouter, type Router } from "../router/index.js";
@@ -627,12 +628,35 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   app.post("/v1/images/generations", async (req: Request, res: Response) => {
-    if (!req.body?.prompt || !req.body?.model) {
-      res.status(400).json({ error: { message: "model and prompt are required", type: "bad_request" } });
+    if (!req.body?.prompt) {
+      res.status(400).json({ error: { message: "prompt is required", type: "bad_request" } });
       return;
     }
+    // ChatGPT Web image generation (browser bridge): the pinned
+    // provider is a web-chat transport, not an OpenAI-wire media API,
+    // so run an image turn through its driver instead of passthrough.
+    const modelStr = typeof req.body?.model === "string" ? req.body.model : "";
+    const pinnedId = modelStr.includes(":") ? modelStr.slice(0, modelStr.indexOf(":")) : "";
+    if (pinnedId && WEBCHAT_IMAGE_PROVIDER_IDS.has(pinnedId)) {
+      const p = providers.find((x) => x.id === pinnedId);
+      if (p) {
+        try {
+          const img = await executeWebChatImage(p, String(req.body.prompt));
+          res.status(200).json({
+            created: Math.floor(Date.now() / 1000),
+            data: [{ b64_json: img.b64 }],
+          });
+        } catch (err) {
+          const status = err instanceof UpstreamError ? err.status || 502 : 502;
+          res.status(status).json({
+            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+          });
+        }
+        return;
+      }
+    }
     await passthroughJson(req, res, "/images/generations", {
-      model: req.body.model,
+      model: req.body.model ?? "auto",
       prompt: req.body.prompt,
       size: req.body.size,
       n: req.body.n,

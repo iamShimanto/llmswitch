@@ -7,8 +7,9 @@
  *
  * API:
  *   GET  /health      → { ok: true }
- *   POST /turn        → { prompt, cookies?, timeoutMs? }
- *                       { ok: true, text } | { ok: false, error }
+ *   POST /turn        → { prompt, cookies?, timeoutMs?, wantImage? }
+ *                       { ok: true, text, image?: { b64, mime } }
+ *                       | { ok: false, error }
  *
  * One browser, turns serialized (the host is small; a single page at a
  * time keeps RAM bounded). Each turn runs in a fresh browser context so
@@ -93,6 +94,47 @@ const EXTRACT_ASSISTANT = () => {
   return answer.trim();
 };
 
+// Find a generated image in the conversation and return it as a data
+// URL (fetched in-page so the session cookies apply). Returns "" when
+// no generated image is present and "PENDING" when one exists but has
+// not finished loading/rendering yet.
+const FIND_IMAGE = async () => {
+  const imgs = [...document.querySelectorAll("img")];
+  const candidates = imgs.filter((im) => {
+    const src = im.currentSrc || im.src || "";
+    const alt = im.alt || "";
+    return (
+      /estuary\/content|oaiusercontent|dalle/i.test(src) ||
+      /^blob:https:\/\/chatgpt\.com/.test(src) ||
+      /generated image/i.test(alt)
+    );
+  });
+  if (!candidates.length) return "";
+  const im = candidates[candidates.length - 1];
+  const src = im.currentSrc || im.src || "";
+  if (!im.complete || !im.naturalWidth) return "PENDING";
+  try {
+    const resp = await fetch(src, { credentials: "include" });
+    if (!resp.ok) return "PENDING";
+    const blob = await resp.blob();
+    if (blob.size > 6_000_000) return "";
+    const dataUrl = await new Promise((resolve) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ""));
+      r.onerror = () => resolve("");
+      r.readAsDataURL(blob);
+    });
+    return dataUrl || "PENDING";
+  } catch {
+    return "PENDING";
+  }
+};
+
+function splitDataUrl(u) {
+  const m = /^data:([^;,]+);base64,([\s\S]+)$/.exec(u || "");
+  return m ? { mime: m[1], b64: m[2] } : null;
+}
+
 const PAGE_PROBLEM = () => {
   const text = document.body?.innerText ?? "";
   if (/verify you are human|just a moment|checking your browser/i.test(text))
@@ -102,7 +144,7 @@ const PAGE_PROBLEM = () => {
   return null;
 };
 
-async function runTurn({ prompt, cookies, timeoutMs }) {
+async function runTurn({ prompt, cookies, timeoutMs, wantImage }) {
   const t0 = Date.now();
   const lap = (stage) => console.log(`[bridge] ${stage} +${Date.now() - t0}ms`);
   const budget = Math.min(Math.max(Number(timeoutMs) || 90_000, 10_000), 150_000);
@@ -148,26 +190,39 @@ async function runTurn({ prompt, cookies, timeoutMs }) {
     if (!sent) await page.keyboard.press("Enter").catch(() => {});
     lap("sent");
 
-    // Poll until the assistant text is non-empty and stable.
+    // Poll until the assistant text is non-empty and stable. For image
+    // turns, also poll for a generated image: a PENDING image keeps the
+    // loop alive even when the text has stabilized, and a captured
+    // image completes the turn even with little or no text.
     const deadline = Date.now() + budget;
     let last = "";
     let stable = 0;
+    let image = null;
     while (Date.now() < deadline) {
       await sleep(1500);
       const problem = await page.evaluate(PAGE_PROBLEM).catch(() => null);
       if (problem) throw new Error(problem);
       const text = await page.evaluate(EXTRACT_ASSISTANT).catch(() => "");
+      const found = await page.evaluate(FIND_IMAGE).catch(() => "");
+      if (typeof found === "string" && found.startsWith("data:")) {
+        image = splitDataUrl(found);
+        if (image) break;
+      }
+      const imagePending = found === "PENDING";
       if (text && text === last) {
         stable++;
-        if (stable >= 2) break;
+        if (stable >= 2 && !(wantImage && imagePending)) break;
       } else {
         stable = 0;
         if (text) last = text;
       }
+      // Text turns: one opportunistic image scan at stability is
+      // already covered above (an image that finished rendering is
+      // captured before the break).
     }
-    if (!last) throw new Error("no assistant response rendered before the timeout");
+    if (!last && !image) throw new Error("no assistant response rendered before the timeout");
     lap("answered");
-    return last;
+    return { text: last, image };
   } finally {
     await ctx.close().catch(() => {});
   }
@@ -205,7 +260,7 @@ const server = createServer(async (req, res) => {
         // One automatic retry with a fresh browser context, but only for
         // FAST transient failures (navigation races, launch hiccups) —
         // retrying a full no-response attempt would just double the wait.
-        const text = await enqueue(async () => {
+        const result = await enqueue(async () => {
           const started = Date.now();
           try {
             return await runTurn(body);
@@ -215,7 +270,7 @@ const server = createServer(async (req, res) => {
             return await runTurn(body);
           }
         });
-        send(200, { ok: true, text });
+        send(200, { ok: true, text: result.text, ...(result.image ? { image: result.image } : {}) });
       } catch (err) {
         send(200, { ok: false, error: err instanceof Error ? err.message : String(err) });
       }
