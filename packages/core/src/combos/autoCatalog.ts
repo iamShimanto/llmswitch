@@ -89,10 +89,17 @@ export function classifyModel(model: string): ModelCaps {
  * providers. Subscription templates prefer OAuth/subscription
  * providers (authType oauth) over pay-per-token API providers.
  */
+/** Live health for one "provider:model" pair (from the circuit breaker). */
+export interface AutoHealth {
+  open: boolean;
+  failures: number;
+}
+
 export function buildAutoTargets(
   template: AutoTemplate,
   providers: ResolvedProvider[],
   limit = 6,
+  health?: Map<string, AutoHealth>,
 ): ComboTarget[] {
   /** Score one model for a category; null = not eligible for it. */
   const scoreFor = (p: ResolvedProvider, m: string, category: AutoCategory): number | null => {
@@ -176,6 +183,16 @@ export function buildAutoTargets(
   // are extra fallbacks for when every specialist is walled/dead
   // (exactly the live failure: 6/6 name-matched candidates unusable).
   const pickLimit = limit + Math.min(3, backfillAdded);
+
+  // Health-aware ordering: pairs whose circuit breaker is OPEN (proven
+  // dead/walled in recent traffic) sink to the very end of the list —
+  // still present as last resorts, but healthy models get the slots.
+  // (Name-based scoring alone kept ranking a provider's retired 404
+  // models above another provider's healthy frontier models.)
+  if (health && health.size > 0) {
+    const isOpen = (t: { model: string }) => health.get(t.model)?.open === true;
+    scored = [...scored.filter((t) => !isOpen(t)), ...scored.filter((t) => isOpen(t))];
+  }
   // Provider diversity: cap any single provider at 3 of the slots. A
   // monoculture candidate list collapses when that one provider has a
   // bad day (observed live: Kilo's catalog filled all 6 slots of

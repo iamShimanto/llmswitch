@@ -559,3 +559,37 @@ describe("auto catalog category backfill", () => {
     expect(targets).toHaveLength(0);
   });
 });
+
+describe("auto catalog health-aware ordering", () => {
+  const mk = (id: string, models: string[], costTier: number): ResolvedProvider =>
+    ({
+      id,
+      name: id,
+      baseUrl: `https://${id}.example/v1`,
+      wireFormat: "openai",
+      models,
+      defaultModel: models[0],
+      costTier,
+      apiKey: "k",
+      allKeys: ["k"],
+    }) as ResolvedProvider;
+
+  it("breaker-open models sink below healthy ones", () => {
+    const providers = [
+      mk("dead", ["qwen-coder-32b", "deepseek-coder"], 4),
+      mk("live", ["claude-sonnet-4-6", "gemini-flash"], 4),
+    ];
+    const health = new Map([
+      ["dead:qwen-coder-32b", { open: true, failures: 2 }],
+      ["dead:deepseek-coder", { open: true, failures: 2 }],
+    ]);
+    const targets = buildAutoTargets(autoTemplate("auto/best-coding")!, providers, 6, health);
+    const models = targets.map((t) => t.model);
+    // healthy general models come before the breaker-open specialists
+    expect(models.indexOf("live:claude-sonnet-4-6")).toBeLessThan(
+      models.indexOf("dead:qwen-coder-32b"),
+    );
+    // …but the open ones remain as last resorts
+    expect(models).toContain("dead:qwen-coder-32b");
+  });
+});
