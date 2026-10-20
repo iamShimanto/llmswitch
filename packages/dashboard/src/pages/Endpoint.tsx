@@ -282,9 +282,12 @@ export default function Endpoint() {
                           {e.models != null ? `${e.models.toLocaleString()} models` : (e.note ?? "—")}
                         </p>
                       </div>
-                      <CopyBtn text={e.path} />
+                      <CopyBtn text={`${origin}${e.path}`} />
                     </div>
-                    <p className="mt-2 truncate font-mono text-xs text-zinc-500">{e.path}</p>
+                    <p className="mt-2 truncate font-mono text-xs text-zinc-500">
+                      {e.path.replace(/^\/v1/, "") || "/"}
+                      <span className="text-zinc-600"> (relative to the base URL above)</span>
+                    </p>
                   </div>
                 ))}
               </div>
