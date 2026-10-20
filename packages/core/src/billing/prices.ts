@@ -89,6 +89,7 @@ const MODEL_PATTERNS: Array<{ label: string; re: RegExp; price: ModelPrice }> = 
   { label: "command", re: /command/, price: { input: 2.5, output: 7.5 } },
   { label: "glm", re: /glm/, price: { input: 0.5, output: 1.5 } },
   { label: "minimax", re: /minimax/, price: { input: 0.3, output: 1.2 } },
+  { label: "nemotron", re: /nemotron/, price: { input: 0.3, output: 0.9 } },
 ];
 
 const PROVIDER_DEFAULT: Record<string, ModelPrice> = {
