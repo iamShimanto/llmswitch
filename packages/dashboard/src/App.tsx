@@ -151,6 +151,21 @@ const PRIMARY: Page[] = [
   { id: "settings", labelKey: "nav.settings" },
 ];
 const PRIMARY_IDS = new Set(PRIMARY.map((p) => p.id));
+
+// Hash routing: the current page lives in the URL (#/providers) so a browser
+// refresh — or sharing the link — stays on the same page instead of
+// resetting to the Overview.
+const ALL_TAB_IDS: string[] = [];
+function collectTabIds(): string[] {
+  if (ALL_TAB_IDS.length > 0) return ALL_TAB_IDS;
+  for (const p of PRIMARY) ALL_TAB_IDS.push(p.id);
+  for (const sec of ADVANCED_SECTIONS) for (const p of sec.pages) ALL_TAB_IDS.push(p.id);
+  return ALL_TAB_IDS;
+}
+function tabFromHash(): string | null {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  return h && collectTabIds().includes(h) ? h : null;
+}
 const ADVANCED_SECTIONS: Section[] = SECTIONS.map((sec) => ({
   ...sec,
   pages: sec.pages.filter((p) => !PRIMARY_IDS.has(p.id)),
@@ -160,7 +175,20 @@ type TabId = string;
 
 function AppInner() {
   const { t } = useLang();
-  const [tab, setTab] = useState<TabId>("home");
+  const [tab, setTabState] = useState<TabId>(() => tabFromHash() ?? "home");
+  const setTab = (id: TabId) => {
+    setTabState(id);
+    const target = `#/${id}`;
+    if (window.location.hash !== target) window.history.pushState(null, "", target);
+  };
+  useEffect(() => {
+    const onHash = () => {
+      const t = tabFromHash();
+      if (t) setTabState(t);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
   const [adminKey, setAdminKeyState] = useState(getAdminKey());
   const [authed, setAuthed] = useState<boolean | null>(null);
   useEffect(() => {
@@ -182,7 +210,7 @@ function AppInner() {
     const params = new URLSearchParams(window.location.search);
     if (["antigravity", "claude", "codex"].includes(params.get("oauth") ?? "")) {
       setTab("providers");
-      window.history.replaceState(null, "", window.location.pathname);
+      window.history.replaceState(null, "", `${window.location.pathname}#/providers`);
     }
   }, []);
   const [mobileNav, setMobileNav] = useState(false);

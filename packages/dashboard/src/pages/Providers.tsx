@@ -656,7 +656,14 @@ export default function Providers() {
   const { t } = useLang();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Remember the open provider across page refreshes.
+  const [selectedId, setSelectedId] = useState<string | null>(() =>
+    sessionStorage.getItem("llmswitch_provider_detail"),
+  );
+  useEffect(() => {
+    if (selectedId) sessionStorage.setItem("llmswitch_provider_detail", selectedId);
+    else sessionStorage.removeItem("llmswitch_provider_detail");
+  }, [selectedId]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
