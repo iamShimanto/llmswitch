@@ -52,6 +52,28 @@ function ProviderDetail({
     }
   };
 
+  const [cookieInput, setCookieInput] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [cookieMsg, setCookieMsg] = useState("");
+
+  const importCookies = async () => {
+    setImporting(true);
+    setCookieMsg("");
+    try {
+      const r = await api.importSession(p.id, cookieInput);
+      if (r.connected) {
+        setCookieInput("");
+        onChanged();
+      } else {
+        setCookieMsg("Session saved, but the provider did not connect — the cookies may be incomplete.");
+      }
+    } catch (e) {
+      setCookieMsg(String(e));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const saveKey = async () => {
     setSavingKey(true);
     setKeyMsg("");
@@ -247,10 +269,31 @@ function ProviderDetail({
               </>
             )
           ) : p.authType === "cookie" ? (
-            <p className="text-sm text-zinc-400">
-              This provider needs an imported browser session — import it from the
-              Sessions page, then come back here to test its models.
-            </p>
+            <>
+              <p className="mb-3 text-sm text-zinc-400">
+                This provider uses your logged-in browser session. Open the site in your
+                browser while logged in, copy the <b>Cookie</b> request header (DevTools →
+                Network → any request → Cookie) or use a cookie-export extension, and paste
+                it here. Unofficial sessions can break when the site changes.
+              </p>
+              <textarea
+                value={cookieInput}
+                onChange={(e) => setCookieInput(e.target.value)}
+                placeholder="session=…; token=…; …"
+                rows={3}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+              />
+              <div className="mt-2">
+                <button
+                  onClick={importCookies}
+                  disabled={importing || !cookieInput.trim()}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {importing ? "Importing…" : "Import & connect"}
+                </button>
+              </div>
+              {cookieMsg && <p className="mt-2 text-sm text-red-400">{cookieMsg}</p>}
+            </>
           ) : (
             <p className="text-sm text-zinc-400">This provider is not available yet.</p>
           )}
@@ -507,6 +550,92 @@ function OAuthConnectPanel() {
   );
 }
 
+
+function DirectoryCard({
+  c,
+  live,
+  onOpen,
+}: {
+  c: CatalogEntry;
+  live: ProviderInfo | undefined;
+  onOpen: () => void;
+}) {
+  const { t } = useLang();
+  const [testState, setTestState] = useState<{ running: boolean; msg?: string; ok?: boolean }>({ running: false });
+  const runTest = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setTestState({ running: true });
+    try {
+      const r = await api.providerTest(c.id, c.defaultModel);
+      setTestState({ running: false, ok: r.ok, msg: r.ok ? `✓ ${r.latencyMs} ms` : `✗ ${r.error ?? "failed"}` });
+    } catch (err) {
+      setTestState({ running: false, ok: false, msg: `✗ ${String(err)}` });
+    }
+  };
+  const connectable = !c.disabled && !live && c.authType !== "none";
+  return (
+    <div
+      onClick={onOpen}
+      className="min-w-0 w-full cursor-pointer overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="min-w-0 truncate font-semibold">{c.name}</h2>
+        {c.disabled ? (
+          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Unavailable</span>
+        ) : live ? (
+          c.authType === "none" ? (
+            <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
+          ) : (
+            <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">{t("common.connected")}</span>
+          )
+        ) : (
+          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Not connected</span>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        {c.id} · {c.authType} · {c.models.length} models · default: {c.defaultModel}
+      </p>
+      <p className="mt-2 truncate text-sm text-zinc-400">{c.models.slice(0, 4).join(", ")}</p>
+      <div className="mt-3 flex items-center gap-2">
+        {connectable && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen();
+            }}
+            className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium hover:bg-emerald-500"
+          >
+            Connect
+          </button>
+        )}
+        {live && (
+          <button
+            onClick={runTest}
+            disabled={testState.running}
+            className="rounded-lg bg-zinc-800 px-4 py-1.5 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50"
+          >
+            {testState.running ? "Testing…" : "Test"}
+          </button>
+        )}
+        <span className="text-xs text-sky-400">{t("providers.detailsArrow")}</span>
+        {live && testState.msg && (
+          <span
+            className={`max-w-40 truncate text-xs ${testState.ok ? "text-emerald-400" : "text-red-400"}`}
+            title={testState.msg}
+          >
+            {testState.msg}
+          </span>
+        )}
+        {live && (
+          <span className="ml-auto text-xs text-zinc-500">
+            {live.stats.calls} calls · {live.stats.errors} errors
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Providers() {
   const { t } = useLang();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -608,39 +737,9 @@ export default function Providers() {
         ))}
       </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {entries.map((c) => {
-          const live = connectedById.get(c.id);
-          return (
-            <button
-              key={c.id}
-              onClick={() => setSelectedId(c.id)}
-              className="min-w-0 w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="min-w-0 truncate font-semibold">{c.name}</h2>
-                {c.disabled ? (
-                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Unavailable</span>
-                ) : live ? (
-                  c.authType === "none" ? (
-                    <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
-                  ) : (
-                    <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">{t("common.connected")}</span>
-                  )
-                ) : (
-                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Not connected</span>
-                )}
-              </div>
-              <p className="mt-1 text-xs text-zinc-500">
-                {c.id} · {c.authType} · {c.models.length} models · default: {c.defaultModel}
-              </p>
-              <p className="mt-2 truncate text-sm text-zinc-400">{c.models.slice(0, 4).join(", ")}</p>
-              <p className="mt-2 text-xs text-zinc-500">
-                {live ? `${live.stats.calls} calls · ${live.stats.errors} errors · ` : ""}
-                <span className="text-sky-400">{t("providers.detailsArrow")}</span>
-              </p>
-            </button>
-          );
-        })}
+        {entries.map((c) => (
+          <DirectoryCard key={c.id} c={c} live={connectedById.get(c.id)} onOpen={() => setSelectedId(c.id)} />
+        ))}
       </div>
       {entries.length === 0 && (
         <p className="text-zinc-400">No providers match your search.</p>
