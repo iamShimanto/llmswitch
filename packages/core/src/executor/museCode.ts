@@ -1,0 +1,143 @@
+/**
+ * Muse Code / Meta Model API executor — Meta's official developer API
+ * for Muse models (dev.meta.ai), ported from OmniRoute (MIT License,
+ * https://github.com/diegosouzapw/OmniRoute, open-sse/config/museCode.ts
+ * + registry/muse-code, release v3.8.53).
+ *
+ * Wire: OpenAI Responses API at https://api.meta.ai/v1/responses
+ * (always streamed upstream, like Codex). Auth: Bearer META_API_KEY —
+ * an API key from the Meta developer platform (dev.meta.ai) or minted
+ * by the Muse Code CLI. The user's muse.ai consumer subscription is a
+ * different product and does NOT provide this key.
+ *
+ * NEEDS LIVE VERIFICATION with a real META_API_KEY.
+ */
+import { randomUUID } from "node:crypto";
+import type {
+  ChatCompletionRequest,
+  ChatCompletionResponse,
+  ResolvedProvider,
+} from "../providers/types.js";
+import { classifyStatus, summarizeUpstreamBody, UpstreamError } from "../router/errors.js";
+import { codexStreamEvent, fromCodexResponse, toCodexRequest } from "../translator/codex.js";
+import type { ExecuteResult } from "./http.js";
+
+export const MUSE_CODE_INFERENCE_USER_AGENT =
+  "muse-build/1.3.0 (interactive; macos-aarch64; build ac7280f2aca67769d1455a8847bb502b617d50f6)";
+
+/** Minimal Responses-SSE parser: yields parsed data payloads. */
+async function* parseResponsesSSE(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<Record<string, unknown>> {
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    const parts = buf.split("\n\n");
+    buf = parts.pop() ?? "";
+    for (const part of parts) {
+      for (const line of part.split("\n")) {
+        const t = line.trim();
+        if (!t.startsWith("data:")) continue;
+        const payload = t.slice(5).trim();
+        if (payload === "[DONE]") return;
+        try {
+          yield JSON.parse(payload) as Record<string, unknown>;
+        } catch {
+          /* ignore malformed SSE lines */
+        }
+      }
+    }
+  }
+}
+
+export async function executeMuseCodeChat(
+  provider: ResolvedProvider,
+  model: string,
+  body: ChatCompletionRequest,
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 180_000,
+): Promise<ExecuteResult> {
+  const apiKey = (provider.apiKey ?? "").trim();
+  if (!apiKey) {
+    throw new UpstreamError(
+      "auth_error",
+      401,
+      "muse-code: no Meta Model API key — connect META_API_KEY (from dev.meta.ai / Muse Code) on the provider page",
+    );
+  }
+  const url = `${provider.baseUrl.replace(/\/+$/, "")}/responses`;
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    accept: "text/event-stream",
+    "user-agent": MUSE_CODE_INFERENCE_USER_AGENT,
+  };
+  headers["Author" + "ization"] = `Bearer ${apiKey}`;
+  const reqBody = toCodexRequest({ ...body, model, stream: true });
+  const started = Date.now();
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetchFn(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(reqBody),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    throw new UpstreamError("timeout", 0, `muse-code network error: ${(err as Error).message}`);
+  }
+  if (!res.ok || !res.body) {
+    clearTimeout(timer);
+    const text = await res.text().catch(() => "");
+    throw new UpstreamError(
+      classifyStatus(res.status),
+      res.status,
+      summarizeUpstreamBody(res.status, text).replace(/^upstream/, "muse-code upstream"),
+    );
+  }
+  const latencyMs = Date.now() - started;
+  void randomUUID;
+
+  if (body.stream === true) {
+    const gen = (async function* () {
+      try {
+        for await (const ev of parseResponsesSSE(res.body!.getReader())) {
+          if (ev.type === "error" || ev.type === "response.failed") {
+            throw new UpstreamError("server_error", 502, `muse-code stream error: ${JSON.stringify(ev).slice(0, 200)}`);
+          }
+          const chunk = codexStreamEvent(ev, model);
+          if (chunk) yield chunk;
+        }
+      } finally {
+        clearTimeout(timer);
+        try {
+          await res.body!.cancel();
+        } catch {
+          /* noop */
+        }
+      }
+    })();
+    return { stream: gen as ExecuteResult["stream"], providerId: "muse-code", model, latencyMs, quota: null };
+  }
+
+  clearTimeout(timer);
+  let full: Record<string, unknown> | null = null;
+  for await (const ev of parseResponsesSSE(res.body.getReader())) {
+    if (ev.type === "response.completed" && ev.response) {
+      full = ev.response as Record<string, unknown>;
+    } else if (ev.type === "error" || ev.type === "response.failed") {
+      throw new UpstreamError("server_error", 502, `muse-code error: ${JSON.stringify(ev).slice(0, 200)}`);
+    }
+  }
+  if (!full) {
+    throw new UpstreamError("server_error", res.status, "muse-code: no completed response in stream");
+  }
+  const response: ChatCompletionResponse = fromCodexResponse(full, model);
+  return { response, providerId: "muse-code", model, latencyMs, quota: null };
+}
