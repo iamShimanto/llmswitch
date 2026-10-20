@@ -461,3 +461,28 @@ the way OmniRoute solves it: with a real browser.
   /v1/chat/completions call answered "Dhaka" via chatgpt-web-free.
   Expect ~10–30s per ChatGPT web reply (a real page turn), one at a
   time. Pack suite 231/231.
+
+## Auto-combo resilience fixes (2026-10-20, late evening)
+A dashboard screenshot showed every auto/* combo at "0/6 targets".
+Root causes found and fixed, each verified live:
+1. **Key-cooldown cascade (the big one)**: a single model's 401
+   ("you need to sign in to use this model") cooled the provider's
+   ONLY key for 60s provider-wide, so every later target on that
+   provider died instantly with "no healthy account keys" — and
+   repeated test clicks kept re-poisoning it. Auth failures now cool
+   only the (key, model) pair; 429s still cool the whole key.
+2. **Provider diversity**: auto candidate lists cap any provider at
+   3 of 6 slots (backfill when alternatives run out) — no more
+   single-provider monocultures.
+3. **Category backfill**: auto/best-coding and best-reasoning append
+   strong general models (Claude/Gemini/GPT — genuinely capable, just
+   not name-matched) as fallback candidates past the limit.
+4. **Health-aware ordering**: candidates whose circuit breaker is
+   open sink to the end of auto lists (router synthesis + combo
+   tests) — proven-dead models stop crowding out healthy ones.
+   auto/best-coding went 0/6 → resolves via OVH Llama-3.3-70B;
+   auto/best-reasoning resolves via Antigravity Claude Opus.
+Upstream realities the gateway now routes around (not gateway bugs):
+Kilo demands sign-in for most non-:free models, Pollinations moved
+models behind x402 payment, LLM7's daily quota was exhausted.
+Core suite: 489/489.
