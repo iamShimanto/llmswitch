@@ -363,3 +363,34 @@ by 100 twice.
   streaming call #2 logged cached=true at 0 ms; after
   `docker compose restart` the stats still showed entries=2 (hydrated
   from SQLite) with persistent: true.
+
+## Rotation v2 — per-model circuit breaker (2026-10-20)
+Audit found the real time sink: 404 was classified "bad_request", which
+STOPPED the provider chain (no fall-through) and recorded NO cooldown —
+a dead model cost a full upstream round-trip on every request, forever,
+and one less error would not have helped. Account rotation also ignored
+model errors entirely.
+- `router/errors.ts`: 404/410 are now `model_error` — chains fall
+  through to the next provider; 400/422 still stop the chain.
+- `router/breaker.ts` (ModelBreaker): per-(provider, model) failures
+  with thresholds and escalating blackouts — model_error 10 min ×3
+  (cap 6h; 410 Gone opens on the FIRST failure), rate_limited 60s,
+  server_error/timeout 30s ×2 (cap 5 min). Open pairs are skipped
+  instantly; pinned requests fail fast with the reason + retry time.
+  After the cooldown exactly one half-open probe runs; success clears,
+  failure re-opens escalated. Auth/bad-request outcomes never trip it.
+- Account rotation tries ONE extra account on a model error (a model
+  may be entitled on another account, e.g. Antigravity) instead of the
+  whole roster.
+- Visibility: `GET /api/circuit-breakers`, `POST
+  /api/circuit-breakers/reset` (per pair or all), Routing page section
+  with per-pair Reset. The provider-wide 30s cooldown for 429/5xx is
+  unchanged and model errors no longer cool the whole provider.
+- Tests: breaker.test.ts ×9 — classifier split, thresholds, 410
+  instant-open, half-open single probe, escalation, router fall-through
+  + fail-fast fetch counting, 400 chain-stop preserved. Core 468/468.
+- Domain proof (NVIDIA's retired meta/llama-3.3-70b-instruct, upstream
+  410): call 1 hit upstream and opened the breaker (failures=1, retry
+  in ~10 min); calls 2–3 were stopped at the gate — the breaker still
+  showed failures=1 afterwards, i.e. no further upstream calls happened.
+  Breakers were reset and the throwaway key deleted after the test.
