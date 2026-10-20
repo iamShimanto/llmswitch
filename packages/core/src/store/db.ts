@@ -40,6 +40,24 @@ CREATE TABLE IF NOT EXISTS usage_log (
   cost_usd REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_log(ts);
+CREATE TABLE IF NOT EXISTS request_logs (
+  id TEXT PRIMARY KEY,
+  ts INTEGER NOT NULL,
+  key_id TEXT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  strategy TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'ok',
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  cached INTEGER NOT NULL DEFAULT 0,
+  request_preview TEXT NOT NULL DEFAULT '',
+  response_preview TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_request_logs_ts ON request_logs(ts);
+CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -168,6 +186,113 @@ export class Store {
   revokeApiKey(id: string): boolean {
     const res = this.db.prepare("DELETE FROM api_keys WHERE id = ?").run(id);
     return res.changes > 0;
+  }
+
+  private requestLogWrites = 0;
+
+  /** Persist one request-log row (from an inspector entry). Retention: 5000. */
+  logRequest(e: {
+    id: string;
+    ts: number;
+    keyId: string | null;
+    provider: string;
+    model: string;
+    strategy: string;
+    status: string;
+    latencyMs: number;
+    promptTokens: number;
+    completionTokens: number;
+    costUsd: number;
+    cached: boolean;
+    request: Array<{ role: string; content: string }>;
+    responsePreview: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO request_logs
+           (id, ts, key_id, provider, model, strategy, status, latency_ms,
+            prompt_tokens, completion_tokens, cost_usd, cached, request_preview, response_preview)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        e.id,
+        e.ts,
+        e.keyId,
+        e.provider,
+        e.model,
+        e.strategy,
+        e.status,
+        Math.round(e.latencyMs),
+        e.promptTokens,
+        e.completionTokens,
+        e.costUsd,
+        e.cached ? 1 : 0,
+        JSON.stringify(e.request).slice(0, 4000),
+        (e.responsePreview ?? "").slice(0, 1000),
+      );
+    // amortized retention trim
+    if (++this.requestLogWrites % 100 === 0) {
+      this.db.exec(
+        `DELETE FROM request_logs WHERE id IN (
+           SELECT id FROM request_logs ORDER BY ts DESC LIMIT -1 OFFSET 5000
+         )`,
+      );
+    }
+  }
+
+  /** Filtered, paginated request-log query (OmniRoute-style logs page). */
+  queryLogs(f: {
+    provider?: string;
+    model?: string;
+    status?: string;
+    keyId?: string;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }): { total: number; logs: Array<Record<string, unknown>> } {
+    const where: string[] = [];
+    const args: Array<string | number> = [];
+    if (f.provider) { where.push("provider = ?"); args.push(f.provider); }
+    if (f.model) { where.push("model LIKE ?"); args.push(`%${f.model}%`); }
+    if (f.status) { where.push("status = ?"); args.push(f.status); }
+    if (f.keyId) { where.push("key_id = ?"); args.push(f.keyId); }
+    if (f.q) {
+      where.push("(provider LIKE ? OR model LIKE ? OR response_preview LIKE ?)");
+      args.push(`%${f.q}%`, `%${f.q}%`, `%${f.q}%`);
+    }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const total = (
+      this.db.prepare(`SELECT COUNT(*) AS n FROM request_logs ${clause}`).get(...args) as { n: number }
+    ).n;
+    const limit = Math.min(200, Math.max(1, f.limit ?? 50));
+    const offset = Math.max(0, f.offset ?? 0);
+    const rows = this.db
+      .prepare(
+        `SELECT id, ts, key_id, provider, model, strategy, status, latency_ms,
+                prompt_tokens, completion_tokens, cost_usd, cached,
+                request_preview, response_preview
+         FROM request_logs ${clause} ORDER BY ts DESC LIMIT ? OFFSET ?`,
+      )
+      .all(...args, limit, offset) as Array<Record<string, unknown>>;
+    return {
+      total,
+      logs: rows.map((r) => ({
+        id: r.id,
+        ts: r.ts,
+        keyId: r.key_id,
+        provider: r.provider,
+        model: r.model,
+        strategy: r.strategy,
+        status: r.status,
+        latencyMs: r.latency_ms,
+        promptTokens: r.prompt_tokens,
+        completionTokens: r.completion_tokens,
+        costUsd: r.cost_usd,
+        cached: r.cached === 1,
+        request: JSON.parse(String(r.request_preview || "[]")),
+        responsePreview: r.response_preview,
+      })),
+    };
   }
 
   /** Most recent usage rows (newest first) — seeds the Live/Activity feed. */
