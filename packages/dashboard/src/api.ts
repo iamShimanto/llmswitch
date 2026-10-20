@@ -43,12 +43,14 @@ export interface OAuthStatus {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const adminKey = localStorage.getItem("llmswitch_admin_key");
+  const session = localStorage.getItem("llmswitch_session");
   const { headers: initHeaders, ...rest } = init ?? {};
   const res = await fetch(path, {
     ...rest,
     headers: {
       "content-type": "application/json",
       ...(adminKey ? { "x-admin-key": adminKey } : {}),
+      ...(session ? { "x-dashboard-session": session } : {}),
       ...(initHeaders ?? {}),
     },
   });
@@ -59,6 +61,36 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export function getAdminKey(): string {
   return localStorage.getItem("llmswitch_admin_key") ?? "";
 }
+
+export function getSession(): string {
+  return localStorage.getItem("llmswitch_session") ?? "";
+}
+
+export function setSession(t: string): void {
+  if (t) localStorage.setItem("llmswitch_session", t);
+  else localStorage.removeItem("llmswitch_session");
+}
+
+export interface AuthStatus {
+  required: boolean;
+  isDefault: boolean;
+}
+
+export const authApi = {
+  status: () => req<AuthStatus>("/api/auth/status"),
+  me: () => req<{ ok: boolean; isDefault: boolean }>("/api/auth/me"),
+  login: (password: string) =>
+    req<{ token: string; isDefault: boolean }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  logout: () => req<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok: boolean; token: string }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+};
 
 export function setAdminKey(k: string): void {
   if (k) localStorage.setItem("llmswitch_admin_key", k);
@@ -93,6 +125,11 @@ export const api = {
       body: JSON.stringify({ messages, providers }),
     }),
   discover: (id: string) => req<{ provider: string; models: string[] }>(`/api/providers/${id}/discover`),
+  testModel: (id: string, model: string) =>
+    req<{ ok: boolean; model: string; latencyMs: number; text?: string; error?: string }>(
+      `/api/providers/${id}/test`,
+      { method: "POST", body: JSON.stringify({ model }) },
+    ),
   workspaces: () => req<Workspace[]>("/api/workspaces"),
   createWorkspace: (name: string) =>
     req<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
