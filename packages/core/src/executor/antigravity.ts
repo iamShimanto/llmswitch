@@ -334,16 +334,39 @@ export interface AntigravityExecuteOpts {
   sleep?: (ms: number) => Promise<void>;
 }
 
-function extractText(payload: any): { text: string; finishReason: string; usage: Record<string, number> } {
+export interface AgyImage {
+  mimeType: string;
+  data: string;
+}
+
+export function imageMarkdown(images?: AgyImage[]): string {
+  return (images ?? [])
+    .map((im) => `![generated image](data:${im.mimeType};base64,${im.data})`)
+    .join("\n\n");
+}
+
+function extractText(payload: any): { text: string; finishReason: string; usage: Record<string, number>; images: AgyImage[] } {
   const resp = payload?.response ?? payload;
   const candidate = resp?.candidates?.[0];
   const parts: Array<{ text?: string; thought?: boolean }> = candidate?.content?.parts ?? [];
   const visible = parts.filter((p) => typeof p.text === "string" && !p.thought).map((p) => p.text as string);
   const all = parts.filter((p) => typeof p.text === "string").map((p) => p.text as string);
   const text = (visible.length > 0 ? visible : all).join("");
+  // Image models (e.g. gemini-3.1-flash-image) return the picture as an
+  // inlineData part next to any text parts — surface it instead of
+  // silently dropping it (the old behavior: billed tokens, empty reply).
+  const images: AgyImage[] = [];
+  for (const p of parts as Array<Record<string, any>>) {
+    const inline = p?.inlineData ?? p?.inline_data;
+    const data = inline?.data;
+    if (typeof data === "string" && data) {
+      images.push({ mimeType: inline.mimeType ?? inline.mime_type ?? "image/png", data });
+    }
+  }
   const usage = resp?.usageMetadata ?? {};
   return {
     text,
+    images,
     finishReason: candidate?.finishReason === "MAX_TOKENS" ? "length" : "stop",
     usage: {
       prompt_tokens: usage.promptTokenCount ?? 0,
@@ -355,7 +378,7 @@ function extractText(payload: any): { text: string; finishReason: string; usage:
 
 async function* parseAntigravitySSE(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): AsyncGenerator<{ text: string; finishReason: string; usage: Record<string, number> }> {
+): AsyncGenerator<{ text: string; finishReason: string; usage: Record<string, number>; images: AgyImage[] }> {
   const decoder = new TextDecoder();
   let buf = "";
   // Cloud Code events are CUMULATIVE snapshots (each carries the full text
@@ -363,11 +386,19 @@ async function* parseAntigravitySSE(
   // both the streaming path and the aggregating path reconstruct the text
   // exactly once.
   let prev = "";
-  const convert = (raw: { text: string; finishReason: string; usage: Record<string, number> }) => {
+  // Snapshots repeat earlier image parts too — emit each image once.
+  const seenImages = new Set<string>();
+  const convert = (raw: { text: string; finishReason: string; usage: Record<string, number>; images: AgyImage[] }) => {
     let delta = raw.text;
     if (delta.startsWith(prev)) delta = delta.slice(prev.length);
     prev = raw.text;
-    return { ...raw, text: delta };
+    const images = raw.images.filter((im) => {
+      const key = `${im.mimeType}:${im.data.length}:${im.data.slice(0, 24)}`;
+      if (seenImages.has(key)) return false;
+      seenImages.add(key);
+      return true;
+    });
+    return { ...raw, text: delta, images };
   };
   function* drain(block: string) {
     for (const line of block.split("\n")) {
@@ -469,11 +500,14 @@ export async function executeAntigravity(
       const gen = (async function* () {
         try {
           for await (const ev of parseAntigravitySSE(res.body!.getReader())) {
+            const md = imageMarkdown(ev.images);
+            const content = md ? (ev.text ? `${ev.text}\n\n${md}` : md) : ev.text;
+            if (!content) continue;
             yield {
               id: `chatcmpl-${Date.now()}`,
               object: "chat.completion.chunk",
               model,
-              choices: [{ index: 0, delta: { role: "assistant", content: ev.text }, finish_reason: null }],
+              choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }],
             };
           }
         } finally {
@@ -490,19 +524,23 @@ export async function executeAntigravity(
 
     clearTimeout(timer);
     let full = "";
+    const allImages: AgyImage[] = [];
     let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let finishReason = "stop";
     if (res.body) {
       for await (const ev of parseAntigravitySSE(res.body.getReader())) {
         full += ev.text;
+        allImages.push(...ev.images);
         usage = ev.usage as typeof usage;
         finishReason = ev.finishReason;
       }
     }
+    const md = imageMarkdown(allImages);
+    const content = md ? (full ? `${full}\n\n${md}` : md) : full;
     const response: ChatCompletionResponse = {
       id: `chatcmpl-${Date.now()}`,
       model,
-      choices: [{ index: 0, message: { role: "assistant", content: full }, finish_reason: finishReason }],
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: finishReason }],
       usage,
     };
     return { response, providerId: "antigravity", model, latencyMs, quota: null };

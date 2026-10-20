@@ -250,3 +250,76 @@ describe("antigravity SSE parsing (live-captured shape)", () => {
     expect(r.response?.usage.total_tokens).toBe(60);
   });
 });
+
+describe("antigravity image parts", () => {
+  const imgPayload = {
+    response: {
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: "Here is your image" },
+              { inlineData: { mimeType: "image/png", data: "QUJD" } },
+            ],
+          },
+          finishReason: "STOP",
+        },
+      ],
+      usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1400, totalTokenCount: 1403 },
+    },
+  };
+
+  it("surfaces an inlineData image as a markdown data URL, once despite cumulative snapshots", async () => {
+    // Cumulative snapshots repeat the same parts — the image (and the
+    // text) must be reconstructed exactly once.
+    const twoEvents = new Response(sseEvent(imgPayload) + sseEvent(imgPayload), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const fetchFn = vi.fn().mockResolvedValue(twoEvents);
+    const res = await executeAntigravity("gemini-3.1-flash-image", body, creds, { fetchFn, sleep: async () => {} });
+    const content = res.response!.choices[0].message.content;
+    expect(content).toBe("Here is your image\n\n![generated image](data:image/png;base64,QUJD)");
+    expect(content.match(/generated image/g)).toHaveLength(1);
+  });
+
+  it("streams the image markdown exactly once", async () => {
+    const twoEvents = new Response(sseEvent(imgPayload) + sseEvent(imgPayload), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const fetchFn = vi.fn().mockResolvedValue(twoEvents);
+    const res = await executeAntigravity(
+      "gemini-3.1-flash-image",
+      { ...body, stream: true },
+      creds,
+      { fetchFn, sleep: async () => {} },
+    );
+    let joined = "";
+    for await (const chunk of res.stream!) {
+      const c = chunk as { choices?: Array<{ delta?: { content?: string } }> };
+      joined += c.choices?.[0]?.delta?.content ?? "";
+    }
+    expect(joined).toContain("![generated image](data:image/png;base64,QUJD)");
+    expect(joined.match(/generated image/g)).toHaveLength(1);
+  });
+
+  it("accepts snake_case inline_data parts too", async () => {
+    const snake = {
+      response: {
+        candidates: [
+          {
+            content: { parts: [{ inline_data: { mime_type: "image/jpeg", data: "WFla" } }] },
+            finishReason: "STOP",
+          },
+        ],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 },
+      },
+    };
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(sseEvent(snake), { status: 200, headers: { "content-type": "text/event-stream" } }),
+    );
+    const res = await executeAntigravity("gemini-3.1-flash-image", body, creds, { fetchFn, sleep: async () => {} });
+    expect(res.response!.choices[0].message.content).toBe("![generated image](data:image/jpeg;base64,WFla)");
+  });
+});

@@ -655,6 +655,82 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
     }
+    // Antigravity image models: Gemini returns the picture inside the
+    // chat stream (the executor surfaces it as a markdown data URL) —
+    // run a pinned chat turn and unwrap it into images-API shape.
+    if (pinnedId === "antigravity" && /image/i.test(modelStr)) {
+      const p = providers.find((x) => x.id === "antigravity");
+      if (p) {
+        try {
+          const result = await router.route(
+            { model: modelStr, messages: [{ role: "user", content: String(req.body.prompt) }] },
+            { strategy: "priority", bypassCache: true, timeoutMs: 150_000 },
+          );
+          const content = result.response?.choices?.[0]?.message?.content ?? "";
+          const m = /data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)/.exec(content);
+          if (result.providerId !== "antigravity" || !m) {
+            res.status(502).json({
+              error: {
+                message: `antigravity did not return an image${content ? ` — it replied: ${content.slice(0, 240)}` : ""}`,
+                type: "upstream_error",
+              },
+            });
+            return;
+          }
+          res.status(200).json({ created: Math.floor(Date.now() / 1000), data: [{ b64_json: m[2] }] });
+        } catch (err) {
+          const status = err instanceof UpstreamError ? err.status || 502 : 502;
+          res.status(status).json({
+            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+          });
+        }
+        return;
+      }
+    }
+    // NVIDIA image models live on the genai surface
+    // (ai.api.nvidia.com/v1/genai/<org>/<model>), not the chat base
+    // URL, so the passthrough cannot reach them. Payload is the FLUX
+    // shape (validated against the live API: aspect_ratio is
+    // rejected; width/height/steps/seed are accepted).
+    const NVIDIA_GENAI_IMAGE_MODELS: ReadonlySet<string> = new Set(["black-forest-labs/flux.1-schnell"]);
+    const modelPart = pinnedId ? modelStr.slice(modelStr.indexOf(":") + 1) : "";
+    if (pinnedId === "nvidia" && NVIDIA_GENAI_IMAGE_MODELS.has(modelPart)) {
+      const p = providers.find((x) => x.id === "nvidia");
+      if (p) {
+        const sizeMatch = /^(\d+)x(\d+)$/.exec(typeof req.body.size === "string" ? req.body.size : "");
+        const width = sizeMatch ? Number(sizeMatch[1]) : 1024;
+        const height = sizeMatch ? Number(sizeMatch[2]) : 1024;
+        try {
+          const upstream = await fetch(`https://ai.api.nvidia.com/v1/genai/${modelPart}`, {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${p.apiKey}` },
+            body: JSON.stringify({ prompt: String(req.body.prompt), width, height, steps: 4, seed: 0 }),
+            signal: AbortSignal.timeout(240_000),
+          });
+          const text = await upstream.text();
+          if (!upstream.ok) {
+            res.status(upstream.status).json({
+              error: { message: `nvidia genai ${upstream.status}: ${text.slice(0, 240)}`, type: "upstream_error" },
+            });
+            return;
+          }
+          const j = JSON.parse(text) as { image?: string; artifacts?: Array<{ base64?: string }> };
+          const b64 = j.image ?? j.artifacts?.[0]?.base64;
+          if (!b64) {
+            res.status(502).json({
+              error: { message: "nvidia genai returned no image data", type: "upstream_error" },
+            });
+            return;
+          }
+          res.status(200).json({ created: Math.floor(Date.now() / 1000), data: [{ b64_json: b64 }] });
+        } catch (err) {
+          res.status(502).json({
+            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+          });
+        }
+        return;
+      }
+    }
     await passthroughJson(req, res, "/images/generations", {
       model: req.body.model ?? "auto",
       prompt: req.body.prompt,

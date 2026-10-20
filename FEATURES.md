@@ -532,3 +532,25 @@ chatgpt-web-free providers:
   — anonymously ChatGPT refuses, and the refusal text is surfaced
   in the error. Import a logged-in session to use it.
 Pack suite: 235/235 (4 new bridge image tests). Core: 489/489.
+
+## Antigravity + NVIDIA image delivery (2026-10-21)
+
+- **Antigravity**: gemini-3.1-flash-image is entitled on the owner's
+  account (probed: Google generates, ~1.5k tokens/image) but the
+  executor's text-only stream parsing silently dropped the image
+  part. extractText now collects inlineData/inline_data parts;
+  parseAntigravitySSE dedupes them across cumulative snapshots;
+  chat replies (stream + aggregate) append the image as a markdown
+  data URL. /v1/images/generations with a pinned antigravity image
+  model runs a pinned chat turn and unwraps the data URL into
+  OpenAI images shape. 3 new executor tests (492 core total).
+- **NVIDIA**: flux.1-schnell added to the catalog; /v1/images with
+  nvidia:black-forest-labs/flux.1-schnell posts to the genai surface
+  (ai.api.nvidia.com/v1/genai/…) with the FLUX width/height payload
+  (aspect_ratio is rejected upstream — probed). NOTE: NVIDIA's free
+  genai queue accepted the request but did not answer within 240s
+  in repeated probes — the path is wired and schema-validated, the
+  upstream free queue is the blocker.
+- **Media page**: one-click "Create a gateway key for me" button
+  (creates a media-page key via /api/keys and fills the box) — the
+  paste-a-key step blocked first use.

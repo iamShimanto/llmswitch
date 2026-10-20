@@ -93,6 +93,21 @@ export default function Media() {
   const [allModels, setAllModels] = useState<string[]>([]);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyError, setKeyError] = useState("");
+
+  const createKeyForMe = async () => {
+    setKeyBusy(true);
+    setKeyError("");
+    try {
+      const rec = await api.createKey("media-page");
+      if (rec?.key) save(rec.key);
+      else setKeyError("Key creation returned no key — create one on the API Keys page instead.");
+    } catch (e) {
+      setKeyError(e instanceof Error ? e.message : String(e));
+    }
+    setKeyBusy(false);
+  };
   const [sel, setSel] = useState<Record<Kind, string>>(() => {
     const base: Record<Kind, string> = { image: "", audio: "", video: "" };
     try {
@@ -217,6 +232,18 @@ export default function Media() {
             className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
           />
         </label>
+        {!key && (
+          <div className="mt-3">
+            <button
+              onClick={createKeyForMe}
+              disabled={keyBusy}
+              className="rounded-lg bg-emerald-700 px-3 py-1.5 text-sm font-medium hover:bg-emerald-600 disabled:opacity-50"
+            >
+              {keyBusy ? t("common.working") : "✨ Create a gateway key for me"}
+            </button>
+            {keyError && <p className="mt-2 text-xs text-red-400">{keyError}</p>}
+          </div>
+        )}
       </div>
       <div className={`${card} mb-6`}>
         <label className="mb-4 block text-sm">
