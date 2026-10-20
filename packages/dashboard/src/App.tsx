@@ -161,7 +161,6 @@ function AppInner() {
   const { t } = useLang();
   const [tab, setTab] = useState<TabId>("home");
   const [adminKey, setAdminKeyState] = useState(getAdminKey());
-  const [showKey, setShowKey] = useState(false);
   useEffect(() => {
     initTheme();
     // After an OAuth browser round-trip the gateway redirects here with
@@ -173,101 +172,123 @@ function AppInner() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    // On small screens start with sections collapsed (except Overview) so the
-    // nav doesn't push page content far below the fold.
-    const narrow = typeof window !== "undefined" && window.innerWidth < 768;
-    return Object.fromEntries(SECTIONS.map((s) => [s.id, narrow ? s.id === "overview" : true]));
-  });
+  const [mobileNav, setMobileNav] = useState(false);
+  const [open, setOpen] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(ADVANCED_SECTIONS.map((sec) => [sec.id, false])),
+  );
+  // auto-open the section containing the active page
+  useEffect(() => {
+    const sec = ADVANCED_SECTIONS.find((x) => x.pages.some((p) => p.id === tab));
+    if (sec) setOpen((o) => ({ ...o, [sec.id]: true }));
+  }, [tab]);
 
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
 
+  const go = (id: TabId) => {
+    setTab(id);
+    setMobileNav(false);
+  };
+
+  const navItem = (page: Page) => (
+    <button
+      key={page.id}
+      onClick={() => go(page.id)}
+      className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
+        tab === page.id ? "bg-zinc-800 font-medium text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
+      }`}
+    >
+      {t(page.labelKey)}
+    </button>
+  );
+
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-zinc-800">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 py-4">
-          <div className="text-lg font-bold">
-            ⚡ LLMSwitch <span className="text-sm font-normal text-zinc-500">{t("common.aiGateway")}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <LanguageToggle />
-            <ThemeToggle />
-            <button
-              onClick={() => setShowKey((v) => !v)}
-              title={t("header.adminKeyTitle")}
-              className="rounded-lg px-2 py-1.5 text-sm text-zinc-500 hover:text-white"
-            >
-              🔑
-            </button>
-            {showKey && (
-              <input
-                type="password"
-                value={adminKey}
-                placeholder={t("header.adminKeyPlaceholder")}
-                onChange={(e) => {
-                  setAdminKeyState(e.target.value);
-                  setAdminKey(e.target.value);
-                }}
-                className="w-32 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs"
-              />
-            )}
-          </div>
+    <div className="min-h-screen md:flex">
+      {/* mobile top bar */}
+      <div className="sticky top-0 z-30 flex items-center justify-between border-b border-zinc-800 px-4 py-3 md:hidden">
+        <div className="text-base font-bold">
+          ⚡ LLMSwitch <span className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</span>
         </div>
-        <nav className="mx-auto max-w-6xl px-4 pb-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {PRIMARY.map((page) => (
-              <button
-                key={page.id}
-                onClick={() => setTab(page.id)}
-                className={`rounded-full border px-3.5 py-1.5 text-sm ${
-                  tab === page.id
-                    ? "border-zinc-600 bg-zinc-800 font-semibold text-white"
-                    : "border-zinc-800 text-zinc-400 hover:text-white"
-                }`}
-              >
-                {t(page.labelKey)}
-              </button>
-            ))}
-            <button
-              onClick={() => setShowAdvanced((v) => !v)}
-              className="rounded-full border border-dashed border-zinc-700 px-3.5 py-1.5 text-sm text-zinc-400 hover:text-white"
-            >
-              {t("nav.advanced")} {showAdvanced ? "▾" : "▸"}
-            </button>
+        <div className="flex items-center gap-1">
+          <LanguageToggle />
+          <ThemeToggle />
+          <button
+            onClick={() => setMobileNav(true)}
+            className="rounded-lg px-2 py-1.5 text-lg leading-none text-zinc-300 hover:text-white"
+            aria-label="Menu"
+          >
+            ☰
+          </button>
+        </div>
+      </div>
+
+      {/* mobile backdrop */}
+      {mobileNav && (
+        <div className="fixed inset-0 z-40 bg-black/60 md:hidden" onClick={() => setMobileNav(false)} />
+      )}
+
+      {/* sidebar */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 transform flex-col border-r border-zinc-800 bg-zinc-950 transition-transform duration-200 md:sticky md:top-0 md:z-auto md:h-screen md:translate-x-0 ${
+          mobileNav ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between px-4 py-4">
+          <div className="text-lg font-bold">
+            ⚡ LLMSwitch
+            <div className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</div>
           </div>
-          {showAdvanced && (
-          <div className="mt-3 flex flex-wrap gap-4 border-t border-zinc-800/60 pt-3">
-            {ADVANCED_SECTIONS.map((s) => (
-              <div key={s.id} className="min-w-36">
+          <button
+            onClick={() => setMobileNav(false)}
+            className="rounded-lg px-2 py-1 text-zinc-400 hover:text-white md:hidden"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto px-3 pb-4">
+          <div className="flex flex-col gap-0.5">{PRIMARY.map(navItem)}</div>
+
+          <div className="mt-5 border-t border-zinc-800/70 pt-3">
+            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+              {t("nav.advanced")}
+            </p>
+            {ADVANCED_SECTIONS.map((sec) => (
+              <div key={sec.id} className="mb-1">
                 <button
-                  onClick={() => toggle(s.id)}
-                  className="mb-1 flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
+                  onClick={() => toggle(sec.id)}
+                  className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
                 >
-                  <span>{open[s.id] ? "▾" : "▸"}</span> {t(s.labelKey)}
+                  <span>{t(sec.labelKey)}</span>
+                  <span>{open[sec.id] ? "▾" : "▸"}</span>
                 </button>
-                {open[s.id] && (
-                  <div className="flex flex-col gap-0.5">
-                    {s.pages.map((page) => (
-                      <button
-                        key={page.id}
-                        onClick={() => setTab(page.id)}
-                        className={`rounded-lg px-3 py-1.5 text-left text-sm ${
-                          tab === page.id ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        {t(page.labelKey)}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {open[sec.id] && <div className="flex flex-col gap-0.5">{sec.pages.map(navItem)}</div>}
               </div>
             ))}
           </div>
-          )}
         </nav>
-      </header>
-      <main key={adminKey} className="mx-auto max-w-6xl px-4 py-8">
+
+        <div className="border-t border-zinc-800 px-4 py-3">
+          <div className="mb-2 hidden items-center gap-1 md:flex">
+            <LanguageToggle />
+            <ThemeToggle />
+          </div>
+          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+            🔑 {t("header.adminKeyTitle")}
+          </label>
+          <input
+            type="password"
+            value={adminKey}
+            placeholder={t("header.adminKeyPlaceholder")}
+            onChange={(e) => {
+              setAdminKeyState(e.target.value);
+              setAdminKey(e.target.value);
+            }}
+            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs"
+          />
+        </div>
+      </aside>
+      <main key={adminKey} className="mx-auto w-full min-w-0 max-w-6xl px-4 py-8">
         {tab === "home" && <Home />}
         {tab === "onboarding" && <Onboarding />}
         {tab === "analytics" && <Analytics />}
