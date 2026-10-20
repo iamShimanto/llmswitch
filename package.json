@@ -7,10 +7,10 @@
   "name": "llmswitch",
   "private": true,
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspace @llmswitch/web-session --if-present && npm run build --workspaces --if-present",
     "dev": "npm --workspace @llmswitch/core run dev",
     "test": "npm --workspace @llmswitch/core run test",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run build --workspace @llmswitch/web-session --if-present && npm run typecheck --workspaces --if-present"
   },
   "type": "module",
   "version": "0.1.0",
