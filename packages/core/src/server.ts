@@ -85,6 +85,22 @@ export function createServer(
     setInterval(runAutoBackup, 3600_000).unref();
   }
 
+  // Usage-log retention: prune rows older than usage_retention_days
+  // (default 180; 0 = keep forever) at boot and daily.
+  const runRetention = () => {
+    try {
+      const days = Number(store.getSetting("usage_retention_days") ?? 180);
+      if (days > 0) {
+        const n = store.pruneUsageOlderThan(Date.now() - days * 24 * 3600_000);
+        if (n > 0) console.log(`[llmswitch] retention pruned ${n} usage rows older than ${days}d`);
+      }
+    } catch (err) {
+      console.error(`[llmswitch] retention failed: ${(err as Error).message}`);
+    }
+  };
+  runRetention();
+  setInterval(runRetention, 24 * 3600_000).unref();
+
   const limiter = new RateLimiter(600);
   // Prompt cache v2: SQLite write-through persistence (survives deploys),
   // true LRU, per-key namespaces, streaming support. Env knobs:

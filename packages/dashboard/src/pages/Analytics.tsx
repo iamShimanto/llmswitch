@@ -275,8 +275,8 @@ function Overview() {
 
       {/* by model */}
       <h3 className="mb-3 mt-8 font-semibold">Top models</h3>
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-zinc-800">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-zinc-900 text-left text-zinc-400">
             <tr>
               <th className="p-3">Model</th>

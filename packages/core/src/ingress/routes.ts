@@ -1182,6 +1182,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     global_budget_usd: z.number().nullable().optional(),
     global_system_prompt: z.string().nullable().optional(),
     global_system_prompt_enabled: z.boolean().optional(),
+    usage_retention_days: z.number().int().min(0).max(3650).optional(),
   });
   function effectiveConfig() {
     const sStrategy = store.getSetting("strategy");
@@ -1221,6 +1222,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       global_system_prompt_enabled: {
         value: store.getSetting("gsp_enabled") === "1",
         source: store.getSetting("gsp_enabled") ? "db" : "default",
+      },
+      usage_retention_days: {
+        value: Number(store.getSetting("usage_retention_days") ?? 180),
+        source: store.getSetting("usage_retention_days") ? "db" : "default",
       },
     };
   }
@@ -1311,6 +1316,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     if (b.global_system_prompt_enabled !== undefined) {
       store.setSetting("gsp_enabled", b.global_system_prompt_enabled ? "1" : "0");
+    }
+    if (b.usage_retention_days !== undefined) {
+      store.setSetting("usage_retention_days", String(b.usage_retention_days));
     }
     if (b.global_budget_usd !== undefined) {
       if (b.global_budget_usd != null && !(b.global_budget_usd > 0)) {

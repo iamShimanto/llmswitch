@@ -52,6 +52,7 @@ export default function Settings() {
   const { t } = useLang();
   const [tab, setTab] = useState("general");
   const [cfg, setCfg] = useState<GatewayConfig | null>(null);
+  const [retentionDays, setRetentionDays] = useState("180");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   // form state
@@ -91,6 +92,7 @@ export default function Settings() {
         setWebhook(c.alert_webhook_url.value ?? "");
         setBudgetAction(c.budget_action.value === "block" ? "block" : "warn");
         setGlobalBudget(c.global_budget_usd.value != null ? String(c.global_budget_usd.value) : "");
+        setRetentionDays(String(c.usage_retention_days?.value ?? 180));
       })
       .catch((e) => setError(String(e)));
   };
@@ -239,10 +241,41 @@ export default function Settings() {
             <input type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
             <label className={label}>{t("settings.newPassword")}</label>
             <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
-            <button onClick={changeDashboardPassword} disabled={!curPw || newPw.length < 6} className="rounded-lg bg-zinc-100 px-4 py-1.5 text-sm font-semibold text-zinc-900 disabled:opacity-50">
+            <button onClick={changeDashboardPassword} disabled={!curPw || newPw.length < 8} className="rounded-lg bg-zinc-100 px-4 py-1.5 text-sm font-semibold text-zinc-900 disabled:opacity-50">
               {t("settings.changePassword")}
             </button>
             {pwMsg && <p className="mt-2 text-sm text-zinc-300">{pwMsg}</p>}
+          </div>
+          <div className={row}>
+            <h2 className="mb-2 font-semibold">Data retention</h2>
+            <p className="mb-2 text-sm text-zinc-400">
+              Usage history older than this many days is pruned automatically (request
+              previews are always capped separately). 0 keeps usage forever.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={3650}
+                value={retentionDays}
+                onChange={(e) => setRetentionDays(e.target.value)}
+                className="w-28 rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm"
+              />
+              <span className="text-sm text-zinc-500">days</span>
+              <button
+                onClick={async () => {
+                  const n = Number(retentionDays);
+                  if (!Number.isFinite(n) || n < 0) return;
+                  const c = await api.putConfig({ usage_retention_days: Math.floor(n) });
+                  setCfg(c);
+                  setSaved(t("common.savedCheck"));
+                  setTimeout(() => setSaved(""), 3000);
+                }}
+                className="rounded-lg bg-zinc-100 px-4 py-1.5 text-sm font-semibold text-zinc-900"
+              >
+                Save
+              </button>
+            </div>
           </div>
           <div className={row}>
             <h2 className="mb-2 font-semibold">{t("profile.admin_key")}</h2>

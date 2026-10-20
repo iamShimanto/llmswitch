@@ -75,8 +75,8 @@ function Overview() {
       {spendRows.length > 0 && (
         <>
           <h2 className="mb-3 mt-8 font-semibold">Spend by provider (this month)</h2>
-          <div className="overflow-hidden rounded-xl border border-zinc-800">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-xl border border-zinc-800">
+            <table className="w-full min-w-[620px] text-sm">
               <thead className="bg-zinc-900 text-left text-zinc-400">
                 <tr><th className="p-3">Provider</th><th className="p-3 text-right">Requests</th><th className="p-3 text-right">USD</th></tr>
               </thead>
@@ -95,8 +95,8 @@ function Overview() {
       )}
 
       <h2 className="mb-3 mt-8 font-semibold">Daily spend (last 7 days)</h2>
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-zinc-800">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-zinc-900 text-left text-zinc-400">
             <tr><th className="p-3">{t("common.day")}</th><th className="p-3 text-right">{t("common.usd")}</th></tr>
           </thead>
@@ -198,8 +198,8 @@ function Budget() {
       </div>
 
       <h2 className="mb-3 font-semibold">{t("common.perKeyBudgets")}</h2>
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-zinc-800">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-zinc-900 text-left text-zinc-400">
             <tr>
               <th className="p-3">{t("common.key")}</th>
@@ -284,8 +284,8 @@ function Pricing() {
   const priceTable = (
     rows: Array<{ label: string; input: number; output: number; action?: React.ReactNode }>,
   ) => (
-    <div className="overflow-hidden rounded-xl border border-zinc-800">
-      <table className="w-full text-sm">
+    <div className="overflow-x-auto rounded-xl border border-zinc-800">
+      <table className="w-full min-w-[620px] text-sm">
         <thead className="bg-zinc-900 text-left text-zinc-400">
           <tr><th className="p-3">{t("common.model")}</th><th className="p-3 text-right">{t("costs.inputPer1M")}</th><th className="p-3 text-right">{t("costs.outputPer1M")}</th><th className="p-3"></th></tr>
         </thead>

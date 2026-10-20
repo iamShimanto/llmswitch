@@ -997,6 +997,12 @@ export class Store {
     return { ok: true };
   }
 
+  /** Retention: delete usage_log rows older than the cutoff. Returns count. */
+  pruneUsageOlderThan(cutoffMs: number): number {
+    const res = this.db.prepare("DELETE FROM usage_log WHERE ts < ?").run(cutoffMs);
+    return Number(res.changes);
+  }
+
   // ---- Prompt cache persistence (cache v2 write-through backing) ----
 
   cacheLoadAll(): Array<{ key: string; response: string; expiresAt: number }> {
