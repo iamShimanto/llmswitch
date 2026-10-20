@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type CatalogEntry } from "../api";
+import {
+  api,
+  type AutoTemplateInfo,
+  type ProviderInfo,
+  type ServerCombo,
+} from "../api";
 
 interface ModelProvider {
   id: string;
   name: string;
-  connected: boolean;
   isDefault: boolean;
   free: boolean;
 }
@@ -14,7 +18,6 @@ interface GroupedModel {
   display: string;
   providers: ModelProvider[];
   caps: string[];
-  anyConnected: boolean;
   anyFree: boolean;
 }
 
@@ -43,25 +46,27 @@ const humanize = (m: string): string =>
 
 export default function Models() {
   const { t } = useLang();
-  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [combos, setCombos] = useState<ServerCombo[]>([]);
+  const [autos, setAutos] = useState<AutoTemplateInfo[]>([]);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [providerFilter, setProviderFilter] = useState("");
   const [cap, setCap] = useState<string | null>(null);
-  const [connectedOnly, setConnectedOnly] = useState(false);
   const [freeOnly, setFreeOnly] = useState(false);
   const [tests, setTests] = useState<Record<string, { state: "running" | "ok" | "fail"; msg?: string }>>({});
+  const [comboTests, setComboTests] = useState<Record<string, { state: "running" | "ok" | "fail"; msg?: string }>>({});
 
   useEffect(() => {
-    api.catalog().then(setCatalog).catch((e) => setError(String(e)));
+    api.providers().then(setProviders).catch((e) => setError(String(e)));
+    api.combos().then((r) => setCombos(r.combos)).catch(() => {});
+    api.autoCatalog().then((r) => setAutos(r.templates)).catch(() => {});
   }, []);
 
   const grouped = useMemo<GroupedModel[]>(() => {
     const map = new Map<string, GroupedModel>();
-    for (const c of catalog) {
-      const hidden = new Set(c.hiddenModels ?? []);
-      for (const m of c.models) {
-        if (hidden.has(m)) continue;
+    for (const p of providers) {
+      for (const m of p.models) {
         let g = map.get(m);
         if (!g) {
           g = {
@@ -69,51 +74,41 @@ export default function Models() {
             display: humanize(m),
             providers: [],
             caps: CAPS.filter((k) => k.re.test(m)).map((k) => k.id),
-            anyConnected: false,
             anyFree: false,
           };
           map.set(m, g);
         }
-        const free = isFreeModel(c.id, m);
-        g.providers.push({
-          id: c.id,
-          name: c.name,
-          connected: c.connected,
-          isDefault: c.defaultModel === m,
-          free,
-        });
-        g.anyConnected = g.anyConnected || c.connected;
+        const free = isFreeModel(p.id, m);
+        g.providers.push({ id: p.id, name: p.name, isDefault: p.defaultModel === m, free });
         g.anyFree = g.anyFree || free;
       }
     }
     return [...map.values()].sort(
-      (a, b) =>
-        Number(b.anyConnected) - Number(a.anyConnected) ||
-        b.providers.length - a.providers.length ||
-        a.model.localeCompare(b.model),
+      (a, b) => b.providers.length - a.providers.length || a.model.localeCompare(b.model),
     );
-  }, [catalog]);
+  }, [providers]);
 
-  const totalPairs = catalog.reduce((n, c) => n + c.models.length, 0);
-  const connectedPairs = catalog
-    .filter((c) => c.connected)
-    .reduce((n, c) => n + c.models.length, 0);
+  const totalPairs = providers.reduce((n, p) => n + p.models.length, 0);
+  const q = query.trim().toLowerCase();
 
-  const shown = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return grouped.filter((g) => {
-      if (connectedOnly && !g.anyConnected) return false;
-      if (freeOnly && !g.anyFree) return false;
-      if (cap && !g.caps.includes(cap)) return false;
-      if (providerFilter && !g.providers.some((p) => p.id === providerFilter)) return false;
-      if (q && !g.model.toLowerCase().includes(q) && !g.providers.some((p) => p.name.toLowerCase().includes(q)))
-        return false;
-      return true;
-    });
-  }, [grouped, query, providerFilter, cap, connectedOnly, freeOnly]);
+  const shownModels = useMemo(
+    () =>
+      grouped.filter((g) => {
+        if (freeOnly && !g.anyFree) return false;
+        if (cap && !g.caps.includes(cap)) return false;
+        if (providerFilter && !g.providers.some((p) => p.id === providerFilter)) return false;
+        if (q && !g.model.toLowerCase().includes(q) && !g.providers.some((p) => p.name.toLowerCase().includes(q)))
+          return false;
+        return true;
+      }),
+    [grouped, q, providerFilter, cap, freeOnly],
+  );
+
+  const shownCombos = combos.filter((c) => !q || c.name.toLowerCase().includes(q));
+  const shownAutos = autos.filter((a) => !q || a.id.toLowerCase().includes(q) || a.title.toLowerCase().includes(q));
 
   const runTest = async (g: GroupedModel) => {
-    const target = g.providers.find((p) => p.connected);
+    const target = g.providers[0];
     if (!target) return;
     setTests((s) => ({ ...s, [g.model]: { state: "running" } }));
     try {
@@ -129,6 +124,22 @@ export default function Models() {
     }
   };
 
+  const runComboTest = async (name: string) => {
+    setComboTests((s) => ({ ...s, [name]: { state: "running" } }));
+    try {
+      const r = await api.testCombo(name);
+      const okCount = r.results.filter((x) => x.ok).length;
+      setComboTests((s) => ({
+        ...s,
+        [name]: r.ok
+          ? { state: "ok", msg: `✓ ${okCount}/${r.results.length} targets · via ${r.resolvedBy?.provider ?? "?"}` }
+          : { state: "fail", msg: `✗ 0/${r.results.length} targets` },
+      }));
+    } catch (e) {
+      setComboTests((s) => ({ ...s, [name]: { state: "fail", msg: `✗ ${String(e)}` } }));
+    }
+  };
+
   const chip = (active: boolean) =>
     `rounded-full border px-3 py-1 text-xs ${
       active
@@ -136,7 +147,8 @@ export default function Models() {
         : "border-zinc-800 text-zinc-400 hover:text-white"
     }`;
 
-  const visible = shown.slice(0, 300);
+  const visible = shownModels.slice(0, 300);
+  const comboCard = "rounded-xl border border-zinc-800 bg-zinc-900 p-3.5";
 
   return (
     <div>
@@ -144,12 +156,13 @@ export default function Models() {
         {t("nav.models")}{" "}
         <span className="text-base font-normal text-zinc-500">
           {grouped.length.toLocaleString()} models · {totalPairs.toLocaleString()} routes ·{" "}
-          {connectedPairs.toLocaleString()} connected
+          {combos.length + autos.length} combos
         </span>
       </h1>
       <p className="mb-4 text-xs text-zinc-500">
-        Every model in the catalog, grouped across providers. Address any route as{" "}
-        <code className="rounded bg-zinc-800 px-1">provider:model</code>.
+        Only your available models — from your connected providers — plus your combos. Address
+        any route as <code className="rounded bg-zinc-800 px-1">provider:model</code>, a combo
+        by its name, or an <code className="rounded bg-zinc-800 px-1">auto/*</code> model.
       </p>
       {error && <p className="mb-4 text-red-400">{error}</p>}
 
@@ -157,7 +170,7 @@ export default function Models() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="🔍 Search models or providers… (e.g. claude, llama, gemini)"
+          placeholder="🔍 Search models, combos or providers…"
           className="min-w-64 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
         />
         <select
@@ -166,14 +179,106 @@ export default function Models() {
           className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
         >
           <option value="">{t("models.all_providers")}</option>
-          {catalog.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-              {c.connected ? " ●" : ""}
-            </option>
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
       </div>
+
+      {(shownCombos.length > 0 || shownAutos.length > 0) && (
+        <>
+          <h2 className="mb-3 font-semibold">
+            🧬 Combos &amp; Auto models{" "}
+            <span className="text-sm font-normal text-zinc-500">
+              {shownCombos.length + shownAutos.length}
+            </span>
+          </h2>
+          <div className="mb-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {shownCombos.map((c) => {
+              const test = comboTests[c.name];
+              const targets = c.targets ?? [];
+              return (
+                <div key={c.name} className={`${comboCard} ${c.enabled === false ? "opacity-50" : ""}`}>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold">{c.name}</span>
+                    <span className="shrink-0 rounded bg-violet-900/60 px-1.5 py-px text-[10px] font-semibold text-violet-300">
+                      {c.kind === "pipeline" ? "PIPELINE" : "COMBO"}
+                    </span>
+                    {c.enabled === false && (
+                      <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-px text-[10px] text-zinc-400">OFF</span>
+                    )}
+                  </div>
+                  <p className="mt-1 truncate text-xs text-zinc-500">
+                    {c.kind === "pipeline"
+                      ? `${c.steps?.length ?? 0} steps`
+                      : `${c.strategy ?? "priority"} · ${targets.length} targets: ${targets.map((x) => x.model).slice(0, 2).join(", ")}${targets.length > 2 ? ` +${targets.length - 2}` : ""}`}
+                  </p>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      onClick={() => void navigator.clipboard?.writeText(c.name).catch(() => {})}
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800"
+                      title="Copy combo name"
+                    >
+                      ⧉
+                    </button>
+                    {c.kind !== "pipeline" && (
+                      <button
+                        onClick={() => runComboTest(c.name)}
+                        disabled={test?.state === "running"}
+                        className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
+                      >
+                        {test?.state === "running" ? "Testing…" : "▶ Test"}
+                      </button>
+                    )}
+                    {test?.msg && (
+                      <span className={`truncate text-xs ${test.state === "ok" ? "text-emerald-400" : "text-red-400"}`}>
+                        {test.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {shownAutos.map((a) => {
+              const test = comboTests[a.id];
+              return (
+                <div key={a.id} className={comboCard}>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold">{a.id}</span>
+                    <span className="shrink-0 rounded bg-sky-900/60 px-1.5 py-px text-[10px] font-semibold text-sky-300">
+                      AUTO
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-xs text-zinc-500">
+                    {a.title} · {a.candidates} candidate models from your providers
+                  </p>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      onClick={() => void navigator.clipboard?.writeText(a.id).catch(() => {})}
+                      className="rounded-lg border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800"
+                      title="Copy model name"
+                    >
+                      ⧉
+                    </button>
+                    <button
+                      onClick={() => runComboTest(a.id)}
+                      disabled={test?.state === "running" || a.candidates === 0}
+                      className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
+                    >
+                      {test?.state === "running" ? "Testing…" : "▶ Test"}
+                    </button>
+                    {test?.msg && (
+                      <span className={`truncate text-xs ${test.state === "ok" ? "text-emerald-400" : "text-red-400"}`}>
+                        {test.msg}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-1.5">
         <button onClick={() => setCap(null)} className={chip(cap === null)}>All</button>
@@ -182,14 +287,11 @@ export default function Models() {
             {k.label}
           </button>
         ))}
-        <button onClick={() => setConnectedOnly((v) => !v)} className={chip(connectedOnly)}>
-          ● Connected only
-        </button>
         <button onClick={() => setFreeOnly((v) => !v)} className={chip(freeOnly)}>
           🆓 Free only
         </button>
         <span className="ml-auto self-center text-xs text-zinc-500">
-          Showing {visible.length} of {shown.length.toLocaleString()}
+          Showing {visible.length} of {shownModels.length.toLocaleString()} models
         </span>
       </div>
 
@@ -205,8 +307,7 @@ export default function Models() {
           <tbody>
             {visible.map((g) => {
               const test = tests[g.model];
-              const firstConnected = g.providers.find((p) => p.connected);
-              const copyId = `${(firstConnected ?? g.providers[0])?.id}:${g.model}`;
+              const copyId = `${g.providers[0]?.id}:${g.model}`;
               return (
                 <tr key={g.model} className="border-t border-zinc-800 hover:bg-zinc-900/50">
                   <td className="max-w-0 px-4 py-2.5">
@@ -226,12 +327,7 @@ export default function Models() {
                       {g.providers.slice(0, 4).map((p) => (
                         <span
                           key={p.id}
-                          className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                            p.connected
-                              ? "border-emerald-800 bg-emerald-950/40 text-emerald-300"
-                              : "border-zinc-800 text-zinc-500"
-                          }`}
-                          title={p.connected ? "Connected" : "Not connected"}
+                          className="rounded-full border border-emerald-800 bg-emerald-950/40 px-2 py-0.5 text-[11px] text-emerald-300"
                         >
                           {p.name}
                           {p.isDefault ? " ★" : ""}
@@ -255,15 +351,13 @@ export default function Models() {
                     >
                       ⧉
                     </button>
-                    {firstConnected && (
-                      <button
-                        onClick={() => runTest(g)}
-                        disabled={test?.state === "running"}
-                        className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
-                      >
-                        {test?.state === "running" ? "Testing…" : "▶ Test"}
-                      </button>
-                    )}
+                    <button
+                      onClick={() => runTest(g)}
+                      disabled={test?.state === "running"}
+                      className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
+                    >
+                      {test?.state === "running" ? "Testing…" : "▶ Test"}
+                    </button>
                   </td>
                 </tr>
               );
@@ -271,14 +365,14 @@ export default function Models() {
             {visible.length === 0 && (
               <tr>
                 <td colSpan={3} className="px-4 py-6 text-center text-zinc-500">
-                  {catalog.length === 0 && !error ? "Loading…" : "No matches."}
+                  {providers.length === 0 && !error ? "Loading…" : "No matches."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {shown.length > visible.length && (
+      {shownModels.length > visible.length && (
         <p className="mt-3 text-xs text-zinc-500">
           Showing the first {visible.length} — search or filter to narrow the list.
         </p>
