@@ -631,6 +631,17 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       });
       const buf = Buffer.from(await upstream.arrayBuffer());
       const pct = upstream.headers.get("content-type") ?? "";
+      if (upstream.status >= 400 && !pct.includes("json")) {
+        // Normalise non-JSON upstream errors so API clients and the dashboard
+        // always receive a JSON error body (never an HTML page or empty body).
+        res.status(upstream.status).json({
+          error: {
+            message: `provider ${p.id} returned HTTP ${upstream.status} for ${upstreamPath}`,
+            type: "upstream_error",
+          },
+        });
+        return;
+      }
       if (pct.includes("text/html")) {
         res.status(502).json({
           error: { message: `provider ${p.id} does not support this endpoint (returned an HTML page)`, type: "upstream_error" },
