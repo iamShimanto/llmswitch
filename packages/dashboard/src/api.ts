@@ -235,6 +235,25 @@ export const api = {
   updateAccount: (id: string, patch: { label?: string; enabled?: boolean }) =>
     req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "POST", body: JSON.stringify(patch) }),
   deleteAccount: (id: string) => req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" }),
+  combos: () => req<{ combos: ServerCombo[] }>("/api/combos"),
+  saveCombo: (def: {
+    name: string;
+    description?: string;
+    strategy?: string;
+    targets?: ComboTarget[];
+    steps?: Array<{ model: string; system?: string }>;
+  }) => req<{ name: string; kind: string }>("/api/combos", { method: "POST", body: JSON.stringify(def) }),
+  deleteCombo: (name: string) =>
+    req<{ deleted: boolean }>(`/api/combos/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  testCombo: (name: string) =>
+    req<{
+      ok: boolean;
+      provider?: string;
+      model?: string;
+      latencyMs: number;
+      text?: string;
+      error?: string;
+    }>(`/api/combos/${encodeURIComponent(name)}/test`, { method: "POST", body: JSON.stringify({}) }),
   setDefaultModel: (id: string, model: string) =>
     req<{ ok: boolean; defaultModel: string }>(`/api/providers/${id}/default-model`, {
       method: "POST",
@@ -447,6 +466,20 @@ export interface ProviderAccount {
   calls: number;
   errors: number;
   lastError: string | null;
+}
+
+export interface ComboTarget {
+  model: string;
+  weight?: number;
+}
+
+export interface ServerCombo {
+  name: string;
+  description: string | null;
+  kind: "router" | "pipeline";
+  strategy: string | null;
+  targets: ComboTarget[] | null;
+  steps: Array<{ model: string; system?: string }> | null;
 }
 
 export interface RoutingRule {
