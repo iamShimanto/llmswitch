@@ -1,17 +1,40 @@
 # ⚡ LLMSwitch — One Endpoint, Every AI
 
+[![GitHub stars](https://img.shields.io/github/stars/iamShimanto/llmswitch?style=social)](https://github.com/iamShimanto/llmswitch)
+[![CI](https://github.com/iamShimanto/llmswitch/actions/workflows/ci.yml/badge.svg)](https://github.com/iamShimanto/llmswitch/actions/workflows/ci.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/iamshimanto/llmswitch)](https://hub.docker.com/r/iamshimanto/llmswitch)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Open-source AI gateway (MIT). Point any OpenAI-compatible client at one local
-endpoint and route across all your providers with auto-fallback, quota-aware
-routing, and usage tracking.
+endpoint and route across **256+ providers** with auto-fallback, quota-aware
+routing, cost controls and a full dashboard.
+
+## 🐳 Docker (fastest start)
+
+```bash
+docker run -d --name llmswitch -p 6000:6000 iamshimanto/llmswitch
+```
+
+Also on GHCR: `ghcr.io/iamshimanto/llmswitch`
+
+Open http://localhost:6000 — the dashboard prints a bootstrap admin key in the
+container logs on first run.
+
+### docker compose
+
+```bash
+git clone https://github.com/iamShimanto/llmswitch.git
+cd llmswitch
+docker compose up -d
+```
 
 ## Quick start
-
 ```bash
 npx llmswitch
 # or
 npm install -g llmswitch && llmswitch
 # or from source
-git clone https://github.com/<org>/llmswitch.git && cd llmswitch
+git clone https://github.com/iamShimanto/llmswitch.git && cd llmswitch
 npm install && npm --workspace @llmswitch/core run dev
 # or docker
 docker compose up -d
