@@ -28,7 +28,7 @@ import type { Store } from "../store/db.js";
  * live verification against Google — the whole flow is mock-tested only.
  */
 
-const STATE_TTL_MS = 10 * 60 * 1000;
+const STATE_TTL_MS = 30 * 60 * 1000;
 
 interface StateEntry {
   expiresAt: number;

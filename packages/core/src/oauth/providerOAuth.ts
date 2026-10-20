@@ -34,7 +34,7 @@ import type { Store } from "../store/db.js";
  * needs the user's own Anthropic/OpenAI account to verify live.
  */
 
-const STATE_TTL_MS = 10 * 60 * 1000;
+const STATE_TTL_MS = 30 * 60 * 1000;
 
 interface StateEntry {
   expiresAt: number;
