@@ -1225,7 +1225,7 @@ export const CATALOG_PROVIDERS: ProviderDef[] = [
     wireFormat: "openai",
     envKey: "NVIDIA_API_KEY",
     envBaseUrl: "NVIDIA_BASE_URL",
-    models: ["moonshotai/kimi-k3", "deepseek-ai/deepseek-v4-pro-0813", "deepseek-ai/deepseek-v4-flash-0731", "meta/muse-glimmer-30b", "poolside/laguna-xs-2.1", "google/gemma-4-31b-it", "google/diffusiongemma-26b-a4b-it", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "openai/gpt-oss-120b"],
+    models: ["moonshotai/kimi-k3", "deepseek-ai/deepseek-v4-pro-0813", "deepseek-ai/deepseek-v4-flash-0731", "meta/muse-glimmer-30b", "poolside/laguna-xs-2.1", "google/gemma-4-31b-it", "google/diffusiongemma-26b-a4b-it", "nvidia/nemotron-3-ultra-550b-a55b", "nvidia/nemotron-3-super-120b-a12b", "nvidia/nemotron-3.5-lightning-30b-a3b", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "openai/gpt-oss-120b", "black-forest-labs/flux.1-schnell"],
     defaultModel: "moonshotai/kimi-k3",
     costTier: 3,
   },
