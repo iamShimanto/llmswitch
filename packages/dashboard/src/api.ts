@@ -145,6 +145,38 @@ export const api = {
   revokeKey: (id: string) => req<{ revoked: boolean }>(`/api/keys/${id}`, { method: "DELETE" }),
   setBudget: (id: string, budgetUsd: number | null) =>
     req(`/api/keys/${id}/budget`, { method: "PUT", body: JSON.stringify({ budgetUsd }) }),
+  backups: () =>
+    req<{ backups: Array<{ name: string; sizeBytes: number; createdAt: number }> }>("/api/backups"),
+  createBackup: () =>
+    req<{ ok: boolean; backup: { name: string; sizeBytes: number; createdAt: number } }>("/api/backups", {
+      method: "POST",
+      body: "{}",
+    }),
+  deleteBackup: (name: string) =>
+    req<{ ok: boolean }>(`/api/backups/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  restoreBackup: (name: string) =>
+    req<{ ok: boolean; restartRequired: boolean }>(`/api/backups/${encodeURIComponent(name)}/restore`, {
+      method: "POST",
+      body: "{}",
+    }),
+  downloadBackup: async (name: string): Promise<void> => {
+    const adminKey = localStorage.getItem("llmswitch_admin_key");
+    const session = localStorage.getItem("llmswitch_session");
+    const res = await fetch(`/api/backups/${encodeURIComponent(name)}/download`, {
+      headers: {
+        ...(adminKey ? { "x-admin-key": adminKey } : {}),
+        ...(session ? { "x-dashboard-session": session } : {}),
+      },
+    });
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  },
   circuitBreakers: () =>
     req<{
       breakers: Array<{

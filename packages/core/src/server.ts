@@ -65,6 +65,26 @@ export function createServer(
     /* pricing warmup must never block boot */
   }
 
+  // Automatic database backups: one at boot if the newest is >24h old
+  // (or none exists), then daily; keeps the newest 7. Disable with
+  // BACKUP_AUTO=0. Failures never block boot.
+  if (process.env.BACKUP_AUTO !== "0") {
+    const runAutoBackup = () => {
+      try {
+        const newest = store.listBackups()[0];
+        if (!newest || Date.now() - newest.createdAt > 24 * 3600_000) {
+          const b = store.createBackup();
+          const pruned = store.pruneBackups(7);
+          console.log(`[llmswitch] auto-backup created: ${b.name}${pruned ? ` (pruned ${pruned} old)` : ""}`);
+        }
+      } catch (err) {
+        console.error(`[llmswitch] auto-backup failed: ${(err as Error).message}`);
+      }
+    };
+    runAutoBackup();
+    setInterval(runAutoBackup, 3600_000).unref();
+  }
+
   const limiter = new RateLimiter(600);
   // Prompt cache v2: SQLite write-through persistence (survives deploys),
   // true LRU, per-key namespaces, streaming support. Env knobs:

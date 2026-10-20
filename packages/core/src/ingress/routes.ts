@@ -2316,6 +2316,49 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ cleared: true });
   });
 
+  // ---- Database backups ----
+  app.get("/api/backups", (_req: Request, res: Response) => {
+    res.json({ backups: store.listBackups() });
+  });
+
+  app.post("/api/backups", (_req: Request, res: Response) => {
+    try {
+      const b = store.createBackup();
+      store.audit("backup.created", null, b.name);
+      res.json({ ok: true, backup: b });
+    } catch (err) {
+      res.status(500).json({ error: { message: (err as Error).message, type: "backup_failed" } });
+    }
+  });
+
+  app.get("/api/backups/:name/download", (req: Request, res: Response) => {
+    const p = store.backupPath(req.params.name);
+    if (!p) {
+      res.status(404).json({ error: { message: "backup not found", type: "not_found" } });
+      return;
+    }
+    res.download(p, req.params.name);
+  });
+
+  app.delete("/api/backups/:name", (req: Request, res: Response) => {
+    if (!store.deleteBackup(req.params.name)) {
+      res.status(404).json({ error: { message: "backup not found", type: "not_found" } });
+      return;
+    }
+    store.audit("backup.deleted", null, req.params.name);
+    res.json({ ok: true });
+  });
+
+  app.post("/api/backups/:name/restore", (req: Request, res: Response) => {
+    const r = store.stageRestore(req.params.name);
+    if (!r.ok) {
+      res.status(400).json({ error: { message: r.error ?? "restore failed", type: "bad_request" } });
+      return;
+    }
+    store.audit("backup.restore_staged", null, req.params.name);
+    res.json({ ok: true, restartRequired: true });
+  });
+
   // ---- Circuit breakers (rotation v2) ----
   app.get("/api/circuit-breakers", (_req: Request, res: Response) => {
     res.json({ breakers: router.breakerSnapshot() });
