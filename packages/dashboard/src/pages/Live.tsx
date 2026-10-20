@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getAdminKey, getSession, type InspectEntry } from "../api";
+import { getAdminKey, getSession, type InspectEntry, type LiveStats } from "../api";
 import { useLang } from "../i18n";
 
 interface RoutingEvent {
@@ -22,6 +22,7 @@ export default function Live() {
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [stats, setStats] = useState<LiveStats | null>(null);
   const pausedRef = useRef(false);
   pausedRef.current = paused;
   const bufferRef = useRef<InspectEntry[]>([]);
@@ -70,6 +71,8 @@ export default function Live() {
                 } else {
                   setEntries((prev) => [entry, ...prev].slice(0, MAX_ENTRIES));
                 }
+              } else if (event === "stats") {
+                setStats(parsed as LiveStats);
               } else if (event === "routing") {
                 setRouting((prev) => [parsed as RoutingEvent, ...prev].slice(0, 30));
               }
@@ -151,6 +154,27 @@ export default function Live() {
           </button>
         </div>
       </div>
+
+      {stats && (
+        <div className="mb-4 flex flex-wrap gap-x-5 gap-y-1 rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-xs text-zinc-400">
+          <span>
+            {t("live.today")}: <span className="font-semibold text-zinc-100">{stats.today.requests}</span>{" "}
+            {t("live.requests").toLowerCase()}
+          </span>
+          <span>
+            {t("live.errors")}: <span className="font-semibold text-red-400">{stats.today.errors}</span>
+          </span>
+          <span>
+            Tokens:{" "}
+            <span className="font-semibold text-zinc-100">
+              {(stats.today.inputTokens + stats.today.outputTokens).toLocaleString()}
+            </span>
+          </span>
+          <span>
+            All-time: <span className="font-semibold text-zinc-100">{stats.totalRequests.toLocaleString()}</span>
+          </span>
+        </div>
+      )}
 
       <div className="mb-4 grid grid-cols-3 gap-4">
         <div className={card}>

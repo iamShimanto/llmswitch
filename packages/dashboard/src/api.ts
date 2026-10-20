@@ -225,6 +225,86 @@ export interface QuotaProvider {
   telemetry: { remaining: number | null; limit: number | null; resetAt: number | null } | null;
 }
 
+export interface LiveStats {
+  today: { requests: number; errors: number; inputTokens: number; outputTokens: number; costUsd: number };
+  totalRequests: number;
+  providersConnected: number;
+}
+
+export interface LiveHandlers {
+  onSnapshot?: (entries: InspectEntry[], routing: unknown[]) => void;
+  onRequest?: (entry: InspectEntry) => void;
+  onRouting?: (event: unknown) => void;
+  onStats?: (stats: LiveStats) => void;
+  onStatus?: (connected: boolean) => void;
+}
+
+/**
+ * Subscribe to the gateway's live event stream (/api/live, SSE over fetch so
+ * the dashboard auth headers can ride along). Auto-reconnects. Returns an
+ * unsubscribe function. Every dashboard page that wants real-time updates
+ * uses this one channel.
+ */
+export function subscribeLive(handlers: LiveHandlers): () => void {
+  let aborted = false;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+
+  const connect = async () => {
+    try {
+      controller = new AbortController();
+      const headers: Record<string, string> = {};
+      const ak = getAdminKey();
+      const sess = getSession();
+      if (ak) headers["x-admin-key"] = ak;
+      if (sess) headers["x-dashboard-session"] = sess;
+      const res = await fetch("/api/live", { headers, signal: controller.signal });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      handlers.onStatus?.(true);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done || aborted) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let event = "message";
+          let data = "";
+          for (const line of chunk.split("\n")) {
+            if (line.startsWith("event: ")) event = line.slice(7).trim();
+            else if (line.startsWith("data: ")) data += line.slice(6);
+          }
+          if (!data) continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (event === "snapshot") handlers.onSnapshot?.(parsed.entries ?? [], parsed.routing ?? []);
+            else if (event === "request") handlers.onRequest?.(parsed as InspectEntry);
+            else if (event === "routing") handlers.onRouting?.(parsed);
+            else if (event === "stats") handlers.onStats?.(parsed as LiveStats);
+          } catch {
+            /* ignore malformed events */
+          }
+        }
+      }
+    } catch {
+      /* fall through to reconnect */
+    }
+    handlers.onStatus?.(false);
+    if (!aborted) retry = setTimeout(connect, 3000);
+  };
+
+  connect();
+  return () => {
+    aborted = true;
+    clearTimeout(retry);
+    controller?.abort();
+  };
+}
+
 export interface RequestLogRow {
   id: string;
   ts: number;

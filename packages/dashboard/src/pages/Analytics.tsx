@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type AnalyticsSummary, type InspectEntry, type KeyRecord } from "../api";
+import {
+  api,
+  subscribeLive,
+  type AnalyticsSummary,
+  type InspectEntry,
+  type KeyRecord,
+} from "../api";
 import { Tabs, TabEmpty } from "../components/Tabs";
 
 function fmtTokens(n: number): string {
@@ -50,12 +56,35 @@ function Overview() {
     api.keys().then(setKeys).catch(() => {});
   }, []);
 
+  const [live, setLive] = useState(false);
+
   useEffect(() => {
     setError("");
     api
       .analyticsSummary(days, keyId || undefined)
       .then(setData)
       .catch((e) => setError(String(e)));
+  }, [days, keyId]);
+
+  // Live: refresh the numbers the moment new traffic lands (debounced).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsub = subscribeLive({
+      onStatus: setLive,
+      onRequest: () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          api
+            .analyticsSummary(days, keyId || undefined)
+            .then(setData)
+            .catch(() => {});
+        }, 800);
+      },
+    });
+    return () => {
+      clearTimeout(timer);
+      unsub();
+    };
   }, [days, keyId]);
 
   const totals = data?.totals;
@@ -73,6 +102,14 @@ function Overview() {
       {/* filters — OmniRoute style */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h2 className="text-lg font-semibold">Usage Analytics</h2>
+        <span
+          className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs ${
+            live ? "bg-emerald-900 text-emerald-300" : "bg-zinc-800 text-zinc-400"
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${live ? "animate-pulse bg-emerald-400" : "bg-zinc-500"}`} />
+          {live ? "Live" : "Offline"}
+        </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <select
             value={keyId}

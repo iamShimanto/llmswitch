@@ -228,6 +228,7 @@ export const en: Record<string, string> = {
   "nav.inspector": "Inspector",
   "nav.live": "Live",
   "live.title": "Live requests",
+  "live.today": "Today",
   "live.streaming": "Streaming",
   "live.reconnecting": "Reconnecting…",
   "live.filterPlaceholder": "Filter provider / model / status…",

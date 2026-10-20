@@ -423,6 +423,36 @@ export class Store {
   }
 
   /** Daily request counts + spend for the last N days (oldest → newest). */
+  /** Cheap live counters for the dashboard stream (today + all-time). */
+  liveStats(): {
+    today: { requests: number; errors: number; inputTokens: number; outputTokens: number; costUsd: number };
+    totalRequests: number;
+  } {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const t = this.db
+      .prepare(
+        `SELECT COUNT(*) AS requests,
+                COALESCE(SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END), 0) AS errors,
+                COALESCE(SUM(prompt_tokens), 0) AS inputTokens,
+                COALESCE(SUM(completion_tokens), 0) AS outputTokens,
+                COALESCE(SUM(cost_usd), 0) AS costUsd
+         FROM usage_log WHERE ts >= ?`,
+      )
+      .get(dayStart.getTime()) as Record<string, number>;
+    const total = this.db.prepare(`SELECT COUNT(*) AS n FROM usage_log`).get() as { n: number };
+    return {
+      today: {
+        requests: Number(t.requests ?? 0),
+        errors: Number(t.errors ?? 0),
+        inputTokens: Number(t.inputTokens ?? 0),
+        outputTokens: Number(t.outputTokens ?? 0),
+        costUsd: Number(t.costUsd ?? 0),
+      },
+      totalRequests: Number(total.n ?? 0),
+    };
+  }
+
   /** Full analytics aggregate over usage_log since a timestamp. */
   analyticsSummary(sinceTs: number, keyId?: string): {
     totals: {
