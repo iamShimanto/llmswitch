@@ -825,8 +825,8 @@ export class Store {
     }
   }
 
-  /** Combo chains (persisted). */
-  saveCombo(name: string, definition: { description?: string; steps: Array<{ model: string; system?: string }> }): void {
+  /** Combos (persisted): pipeline chains AND router combos. */
+  saveCombo(name: string, definition: ComboDefinition): void {
     this.db
       .prepare(
         "INSERT INTO combos (name, definition, created_at) VALUES (?, ?, ?) " +
@@ -835,30 +835,30 @@ export class Store {
       .run(name, JSON.stringify(definition), Date.now());
   }
 
-  getCombo(name: string): { name: string; description?: string; steps: Array<{ model: string; system?: string }>; createdAt: number } | null {
+  getCombo(name: string): StoredCombo | null {
     const row = this.db.prepare("SELECT * FROM combos WHERE name = ?").get(name) as
       | { name: string; definition: string; created_at: number }
       | undefined;
     if (!row) return null;
     try {
-      const def = JSON.parse(row.definition) as { description?: string; steps: Array<{ model: string; system?: string }> };
-      return { name: row.name, description: def.description, steps: def.steps, createdAt: row.created_at };
+      const def = JSON.parse(row.definition) as ComboDefinition;
+      return { name: row.name, ...def, createdAt: row.created_at };
     } catch {
       return null;
     }
   }
 
-  listCombos(): Array<{ name: string; description?: string; steps: Array<{ model: string; system?: string }>; createdAt: number }> {
+  listCombos(): StoredCombo[] {
     const rows = this.db.prepare("SELECT * FROM combos ORDER BY name").all() as Array<{
       name: string;
       definition: string;
       created_at: number;
     }>;
-    const out: Array<{ name: string; description?: string; steps: Array<{ model: string; system?: string }>; createdAt: number }> = [];
+    const out: StoredCombo[] = [];
     for (const row of rows) {
       try {
-        const def = JSON.parse(row.definition) as { description?: string; steps: Array<{ model: string; system?: string }> };
-        out.push({ name: row.name, description: def.description, steps: def.steps, createdAt: row.created_at });
+        const def = JSON.parse(row.definition) as ComboDefinition;
+        out.push({ name: row.name, ...def, createdAt: row.created_at });
       } catch {
         /* skip corrupt rows */
       }
@@ -948,6 +948,20 @@ export interface ProviderAccount {
   calls: number;
   errors: number;
   lastError: string | null;
+}
+
+/** A stored combo definition: pipeline (steps) or router combo (targets). */
+export interface ComboDefinition {
+  description?: string;
+  kind?: "router" | "pipeline";
+  strategy?: string;
+  targets?: Array<{ model: string; weight?: number }>;
+  steps?: Array<{ model: string; system?: string }>;
+}
+
+export interface StoredCombo extends ComboDefinition {
+  name: string;
+  createdAt: number;
 }
 
 export interface RoutingRule {

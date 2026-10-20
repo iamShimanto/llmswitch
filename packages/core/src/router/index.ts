@@ -25,6 +25,7 @@ import type {
 import { CooldownTracker } from "../quota/limiter.js";
 import { PromptCache } from "../cache/index.js";
 import { QuotaTelemetry, type QuotaInfo } from "../quota/telemetry.js";
+import { orderComboTargets, type RouterCombo } from "../combos/index.js";
 import { buildEmulationPrompt, nativeTools, parseEmulatedToolCall } from "../tools/emulation.js";
 import { SemanticCache } from "../cache/semantic.js";
 import { classifyError, isRetryable } from "./errors.js";
@@ -49,6 +50,8 @@ export interface RouteOptions {
   onEvent?: (e: RouterEvent) => void;
   /** bypass prompt cache for this request */
   bypassCache?: boolean;
+  /** internal: router-combo nesting depth (recursion guard) */
+  comboDepth?: number;
 }
 
 export type RouterEvent =
@@ -94,6 +97,8 @@ export interface RouterOptions {
   accounts?: AccountHooks;
   /** Live routing rules (per-model provider chains). */
   routingRules?: () => RoutingRule[];
+  /** Live router combos (OmniRoute-style virtual models). */
+  combos?: () => RouterCombo[];
 }
 
 /** Multi-account plumbing supplied by the server (backed by the store). */
@@ -292,6 +297,8 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
   const poolSigs = new Map<string, string>();
   const accountHooks = opts.accounts;
   const routingRulesFn = opts.routingRules;
+  const combosFn = opts.combos;
+  const comboCursors = new Map<string, number>();
 
   function record(id: string, latencyMs: number, failed: boolean): void {
     const s = stats.get(id) ?? emptyStats();
@@ -301,10 +308,54 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     stats.set(id, s);
   }
 
+  async function runRouterCombo(
+    combo: RouterCombo,
+    body: ChatCompletionRequest,
+    opts: RouteOptions,
+  ): Promise<ExecuteResult> {
+    const cursor = comboCursors.get(combo.name) ?? 0;
+    if (combo.strategy === "round-robin") comboCursors.set(combo.name, cursor + 1);
+    const ordered = orderComboTargets(combo.strategy, combo.targets, {
+      providerCalls: (pid) => stats.get(pid)?.calls ?? 0,
+      providerOf: (model) => {
+        if (model.includes(":")) return model.split(":")[0]!;
+        return providers.find((p) => p.models.includes(model))?.id ?? "";
+      },
+      providerTier: (model) => {
+        const pid = model.includes(":")
+          ? model.split(":")[0]!
+          : providers.find((p) => p.models.includes(model))?.id;
+        return providers.find((p) => p.id === pid)?.costTier ?? 3;
+      },
+      cursor,
+    });
+    const tried: string[] = [];
+    let lastError: unknown = null;
+    for (const t of ordered) {
+      tried.push(t.model);
+      try {
+        return await route(
+          { ...body, model: t.model },
+          { ...opts, comboDepth: (opts.comboDepth ?? 0) + 1 },
+        );
+      } catch (err) {
+        lastError = err; // combos fall through on ANY target failure
+      }
+    }
+    const msg = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(`combo "${combo.name}": all targets failed (tried: ${tried.join(", ")}): ${msg}`);
+  }
+
   async function route(body: ChatCompletionRequest, opts: RouteOptions = {}): Promise<ExecuteResult> {
     const strategy = opts.strategy ?? "priority";
     const fetchFn = opts.fetchFn ?? fetch;
     const timeoutMs = opts.timeoutMs ?? 120_000;
+
+    // Router combos (virtual models) intercept before normal resolution.
+    if ((opts.comboDepth ?? 0) < 3 && combosFn && body.model !== "auto") {
+      const combo = combosFn().find((c) => c.name === body.model);
+      if (combo) return runRouterCombo(combo, body, opts);
+    }
 
     let target = resolveTarget(providers, body.model, strategy, stats);
 

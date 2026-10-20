@@ -23,7 +23,7 @@ import {
   saveMuseCodeSession,
 } from "../oauth/museCodeDevice.js";
 import { SkillRegistry } from "../skills/index.js";
-import { runCombo, validateCombo, type Combo } from "../combos/index.js";
+import { runCombo, validateCombo, validateAnyCombo, type Combo } from "../combos/index.js";
 import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
 import { WEBCHAT_PROVIDER_IDS } from "../executor/webchat.js";
 import type { AppConfig } from "../config.js";
@@ -113,8 +113,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // OpenAI-compatible model list
   app.get("/v1/models", (_req: Request, res: Response) => {
+    const comboModels = store
+      .listCombos()
+      .filter((c) => c.kind === "router" || c.targets)
+      .map((c) => ({ id: c.name, object: "model", owned_by: "llmswitch-combo" }));
     const data = [
       { id: "auto", object: "model", owned_by: "llmswitch" },
+      ...comboModels,
       ...providers.flatMap((p) =>
         p.models.map((m) => ({ id: `${p.id}:${m}`, object: "model", owned_by: p.id })),
       ),
@@ -2499,18 +2504,64 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       combos: store.listCombos().map((c) => ({
         name: c.name,
         description: c.description ?? null,
-        steps: c.steps,
+        kind: c.kind ?? (c.targets ? "router" : "pipeline"),
+        strategy: c.strategy ?? null,
+        targets: c.targets ?? null,
+        steps: c.steps ?? null,
       })),
     });
   });
   app.post("/api/combos", (req: Request, res: Response) => {
     try {
-      const v = validateCombo(req.body);
-      store.saveCombo(v.name, { description: v.description, steps: v.steps });
-      store.audit("combo.created", req.apiKey?.id ?? null, `name=${v.name}`);
-      res.status(201).json({ name: v.name, steps: v.steps });
+      const v = validateAnyCombo(req.body);
+      if (v.kind === "router") {
+        store.saveCombo(v.name, {
+          description: v.description,
+          kind: "router",
+          strategy: v.strategy,
+          targets: v.targets,
+        });
+        store.audit("combo.created", req.apiKey?.id ?? null, `name=${v.name} kind=router`);
+        res.status(201).json({ name: v.name, kind: "router", strategy: v.strategy, targets: v.targets });
+      } else {
+        store.saveCombo(v.name, { description: v.description, kind: "pipeline", steps: v.steps });
+        store.audit("combo.created", req.apiKey?.id ?? null, `name=${v.name} kind=pipeline`);
+        res.status(201).json({ name: v.name, kind: "pipeline", steps: v.steps });
+      }
     } catch (e) {
       res.status(400).json({ error: { message: (e as Error).message, type: "bad_request" } });
+    }
+  });
+  // Probe a router combo through the real router (dashboard Test button).
+  app.post("/api/combos/:name/test", async (req: Request, res: Response) => {
+    const def = store.getCombo(req.params.name);
+    if (!def || !(def.kind === "router" || def.targets)) {
+      res.status(404).json({ error: { message: "unknown router combo", type: "not_found" } });
+      return;
+    }
+    const message = typeof req.body?.message === "string" && req.body.message ? req.body.message : "Say ok";
+    const started = Date.now();
+    try {
+      const r = await router.route(
+        { model: def.name, messages: [{ role: "user", content: message }] },
+        { bypassCache: true, timeoutMs: 45_000 },
+      );
+      const text = (r.response?.choices?.[0]?.message?.content ?? "").slice(0, 200);
+      res.json({
+        ok: true,
+        combo: def.name,
+        provider: r.providerId,
+        model: r.model,
+        latencyMs: Date.now() - started,
+        text,
+      });
+    } catch (e) {
+      res.json({
+        ok: false,
+        combo: def.name,
+        latencyMs: Date.now() - started,
+        error: (e as Error).message.slice(0, 300),
+      });
     }
   });
   app.delete("/api/combos/:name", (req: Request, res: Response) => {
@@ -2524,13 +2575,22 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(404).json({ error: { message: `unknown combo: ${req.params.name}`, type: "not_found" } });
       return;
     }
+    if (!def.steps || def.steps.length === 0) {
+      res.status(400).json({
+        error: {
+          message: `"${def.name}" is a router combo — call it as a model via /v1/chat/completions (model: "${def.name}")`,
+          type: "bad_request",
+        },
+      });
+      return;
+    }
     const input = typeof req.body?.input === "string" ? req.body.input : "";
     if (!input.trim()) {
       res.status(400).json({ error: { message: "input is required", type: "bad_request" } });
       return;
     }
     try {
-      const combo: Combo = { name: def.name, description: def.description, steps: def.steps, createdAt: def.createdAt };
+      const combo: Combo = { name: def.name, description: def.description, steps: def.steps!, createdAt: def.createdAt };
       const r = await runCombo(combo, input, router);
       for (const s of r.steps) {
         store.logUsage({

@@ -11,6 +11,7 @@ import { registerRoutes } from "./ingress/routes.js";
 import { Inspector } from "./inspect/index.js";
 import { RateLimiter } from "./quota/limiter.js";
 import { createRouter, type Router } from "./router/index.js";
+import type { RouterCombo } from "./combos/index.js";
 import { RoutingEventLog } from "./router/events.js";
 import { Store } from "./store/db.js";
 import type { ProviderRegistry } from "./providers/registry.js";
@@ -131,6 +132,18 @@ export function createServer(
       },
     },
     routingRules: () => store.listRoutingRules(),
+    combos: () =>
+      store
+        .listCombos()
+        .filter((c) => (c.kind === "router" || c.targets) && c.targets)
+        .map((c) => ({
+          name: c.name,
+          description: c.description,
+          kind: "router" as const,
+          strategy: (c.strategy ?? "priority") as RouterCombo["strategy"],
+          targets: c.targets!,
+          createdAt: c.createdAt,
+        })),
   });
   const routingLog = new RoutingEventLog();
 
