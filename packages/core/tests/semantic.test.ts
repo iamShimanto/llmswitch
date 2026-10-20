@@ -35,20 +35,20 @@ describe("TfIdfEmbedder", () => {
 describe("SemanticCache", () => {
   it("matches paraphrases above threshold", async () => {
     const c = new SemanticCache(new TfIdfEmbedder(), 0.5);
-    await c.add("What is the capital city of France?", resp("Paris"));
-    const hit = await c.find("What is the capital of France?");
+    await c.add("test-scope", "What is the capital city of France?", resp("Paris"));
+    const hit = await c.find("test-scope", "What is the capital of France?");
     expect(hit).not.toBeNull();
     expect(hit!.response.choices[0]!.message.content).toBe("Paris");
   });
 
   it("misses unrelated prompts", async () => {
     const c = new SemanticCache(new TfIdfEmbedder(), 0.92);
-    await c.add("What is the capital city of France?", resp("Paris"));
-    expect(await c.find("Explain quantum entanglement")).toBeNull();
+    await c.add("test-scope", "What is the capital city of France?", resp("Paris"));
+    expect(await c.find("test-scope", "Explain quantum entanglement")).toBeNull();
   });
 
   it("empty cache → null", async () => {
-    expect(await new SemanticCache().find("hi")).toBeNull();
+    expect(await new SemanticCache().find("test-scope", "hi")).toBeNull();
   });
 
   it("promptText uses the last user message", () => {
@@ -109,12 +109,12 @@ describe("ProviderEmbedder", () => {
 
   it("matches via provider vectors + cosine threshold", async () => {
     const c = new SemanticCache(new ProviderEmbedder(mockEmbed), 0.9);
-    await c.add("cat", resp("meow"));
-    const hit = await c.find("dog");
+    await c.add("test-scope", "cat", resp("meow"));
+    const hit = await c.find("test-scope", "dog");
     expect(hit).not.toBeNull();
     expect(hit!.response.choices[0]!.message.content).toBe("meow");
     expect(hit!.score).toBeGreaterThan(0.9);
-    const miss = await c.find("car");
+    const miss = await c.find("test-scope", "car");
     expect(miss).toBeNull();
   });
 
@@ -123,8 +123,8 @@ describe("ProviderEmbedder", () => {
       throw new Error("upstream down");
     };
     const c = new SemanticCache(new ProviderEmbedder(failing), 0.5);
-    await c.add("What is the capital city of France?", resp("Paris"));
-    const hit = await c.find("What is the capital of France?");
+    await c.add("test-scope", "What is the capital city of France?", resp("Paris"));
+    const hit = await c.find("test-scope", "What is the capital of France?");
     expect(hit).not.toBeNull();
     expect(hit!.response.choices[0]!.message.content).toBe("Paris");
   });

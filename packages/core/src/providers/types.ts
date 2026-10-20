@@ -95,6 +95,13 @@ export interface ChatCompletionRequest {
   messages: ChatMessage[];
   max_tokens?: number;
   temperature?: number;
+  top_p?: number;
+  stop?: string | string[] | null;
+  seed?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  response_format?: unknown;
+  user?: string;
   stream?: boolean;
   tools?: ToolDef[];
   tool_choice?: unknown;

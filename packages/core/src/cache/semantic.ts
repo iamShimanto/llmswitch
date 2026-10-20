@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ChatCompletionResponse } from "../providers/types.ts";
 
 /**
@@ -81,15 +82,28 @@ export class ProviderEmbedder implements Embedder {
 interface Entry {
   prompt: string;
   response: ChatCompletionResponse;
+  /** isolation scope: caller namespace + provider + model + system hash */
+  scope: string;
+  expiresAt: number;
 }
 
+/**
+ * Semantic cache v2. v1 matched paraphrases across ANY provider, model,
+ * system prompt and caller — a response written by one model for one user
+ * could be served to another. v2 scopes every entry to
+ * (namespace | provider | model | system-prompt hash) and expires
+ * entries on the same TTL as the exact cache.
+ */
 export class SemanticCache {
   private entries: Entry[] = [];
+  private hits = 0;
+  private misses = 0;
 
   constructor(
     private embedder: Embedder = new TfIdfEmbedder(),
     private threshold = 0.92,
     private maxEntries = 500,
+    private ttlMs = 3600_000,
   ) {}
 
   /** Canonical prompt text for similarity (last user message). */
@@ -98,34 +112,82 @@ export class SemanticCache {
     return (users[users.length - 1]?.content ?? "").slice(0, 2000);
   }
 
-  async add(prompt: string, response: ChatCompletionResponse): Promise<void> {
-    // replace existing entry for near-identical prompts
-    this.entries = this.entries.filter((e) => e.prompt !== prompt);
-    this.entries.unshift({ prompt, response });
+  /** Scope string for a request: responses are only shared inside it. */
+  static scopeFor(
+    namespace: string,
+    providerId: string,
+    model: string,
+    messages: Array<{ role: string; content: string | null }>,
+  ): string {
+    const system = messages
+      .filter((m) => m.role === "system")
+      .map((m) => m.content ?? "")
+      .join("\n");
+    const sysHash = createHash("sha256").update(system).digest("hex").slice(0, 12);
+    return `${namespace}|${providerId}|${model}|${sysHash}`;
+  }
+
+  async add(scope: string, prompt: string, response: ChatCompletionResponse, now = Date.now()): Promise<void> {
+    // replace the existing entry for the same prompt inside the same scope
+    this.entries = this.entries.filter((e) => !(e.scope === scope && e.prompt === prompt));
+    this.entries.unshift({
+      prompt,
+      response: structuredClone(response),
+      scope,
+      expiresAt: now + this.ttlMs,
+    });
     if (this.entries.length > this.maxEntries) this.entries.length = this.maxEntries;
   }
 
-  /** Best match above threshold, or null. Single embed call (corpus-consistent). */
-  async find(prompt: string): Promise<{ response: ChatCompletionResponse; score: number } | null> {
-    if (this.entries.length === 0) return null;
-    // embed query together with the corpus so TF-IDF shares one vocabulary
-    const vectors = await this.embedder.embed([prompt, ...this.entries.map((e) => e.prompt)]);
+  /** Best in-scope match above threshold, or null. */
+  async find(
+    scope: string,
+    prompt: string,
+    now = Date.now(),
+  ): Promise<{ response: ChatCompletionResponse; score: number } | null> {
+    this.entries = this.entries.filter((e) => e.expiresAt > now);
+    const scoped = this.entries.filter((e) => e.scope === scope);
+    if (scoped.length === 0) {
+      this.misses++;
+      return null;
+    }
+    // embed query together with the in-scope corpus so TF-IDF shares one
+    // vocabulary; scoping also bounds this to the caller's own slice
+    const vectors = await this.embedder.embed([prompt, ...scoped.map((e) => e.prompt)]);
     const qv = vectors[0]!;
     let best: { response: ChatCompletionResponse; score: number } | null = null;
-    for (let i = 0; i < this.entries.length; i++) {
+    for (let i = 0; i < scoped.length; i++) {
       const score = cosine(qv, vectors[i + 1]!);
       if (score >= this.threshold && (!best || score > best.score)) {
-        best = { response: this.entries[i]!.response, score };
+        best = { response: scoped[i]!.response, score };
       }
     }
-    return best;
+    if (best) {
+      this.hits++;
+      return { response: structuredClone(best.response), score: best.score };
+    }
+    this.misses++;
+    return null;
   }
 
   size(): number {
     return this.entries.length;
   }
 
+  stats(): { entries: number; hits: number; misses: number; hitRate: number; threshold: number } {
+    const total = this.hits + this.misses;
+    return {
+      entries: this.entries.length,
+      hits: this.hits,
+      misses: this.misses,
+      hitRate: total === 0 ? 0 : Math.round((this.hits / total) * 1000) / 10,
+      threshold: this.threshold,
+    };
+  }
+
   clear(): void {
     this.entries = [];
+    this.hits = 0;
+    this.misses = 0;
   }
 }

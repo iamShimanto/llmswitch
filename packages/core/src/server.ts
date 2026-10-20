@@ -66,7 +66,27 @@ export function createServer(
   }
 
   const limiter = new RateLimiter(600);
-  const cache = new PromptCache();
+  // Prompt cache v2: SQLite write-through persistence (survives deploys),
+  // true LRU, per-key namespaces, streaming support. Env knobs:
+  // CACHE_TTL_MS (default 1h), CACHE_MAX_ENTRIES (default 2000).
+  store.cachePruneExpired();
+  const cache = new PromptCache(
+    Number(process.env.CACHE_TTL_MS ?? 3600_000) || 3600_000,
+    Number(process.env.CACHE_MAX_ENTRIES ?? 2000) || 2000,
+    {
+      load: () =>
+        store.cacheLoadAll().flatMap((r) => {
+          try {
+            return [{ key: r.key, response: JSON.parse(r.response), expiresAt: r.expiresAt }];
+          } catch {
+            return [];
+          }
+        }),
+      put: (key, response, expiresAt) => store.cachePut(key, JSON.stringify(response), expiresAt),
+      del: (key) => store.cacheDel(key),
+      clear: () => store.cacheClear(),
+    },
+  );
   // Provider-backed embeddings for the semantic cache (opt-in). Falls back to
   // local TF-IDF when SEMANTIC_EMBEDDINGS is unset or the provider call fails.
   const embedViaProvider =
@@ -93,6 +113,8 @@ export function createServer(
       ? new SemanticCache(
           embedViaProvider ? new ProviderEmbedder(embedViaProvider) : undefined,
           Number(process.env.SEMANTIC_CACHE_THRESHOLD ?? 0.92),
+          500,
+          Number(process.env.CACHE_TTL_MS ?? 3600_000) || 3600_000,
         )
       : undefined;
   const alerter = new Alerter();
@@ -293,7 +315,7 @@ export function createServer(
       /* logging must never break traffic */
     }
   });
-  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry, dashboardSessions: sessions });
+  registerRoutes(app, { config, providers, store, router, cache, semantic, alerter, inspector, routingLog, refreshProviders, registry, dashboardSessions: sessions });
 
   if (hasDashboard) {
     app.use(express.static(dashboardDir));

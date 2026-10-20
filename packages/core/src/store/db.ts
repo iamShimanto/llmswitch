@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS combos (
   definition TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS prompt_cache (
+  key TEXT PRIMARY KEY,
+  response TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 `;
 
 /** API keys are stored as scrypt hashes — the raw key is shown once at creation. */
@@ -862,6 +867,53 @@ export class Store {
       }
     }
     return n;
+  }
+
+  // ---- Prompt cache persistence (cache v2 write-through backing) ----
+
+  cacheLoadAll(): Array<{ key: string; response: string; expiresAt: number }> {
+    return (
+      this.db
+        .prepare("SELECT key, response, expires_at FROM prompt_cache ORDER BY expires_at ASC")
+        .all() as Array<{ key: string; response: string; expires_at: number }>
+    ).map((r) => ({ key: r.key, response: r.response, expiresAt: r.expires_at }));
+  }
+
+  cachePut(key: string, responseJson: string, expiresAt: number): void {
+    try {
+      this.db
+        .prepare(
+          "INSERT INTO prompt_cache (key, response, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET response = excluded.response, expires_at = excluded.expires_at",
+        )
+        .run(key, responseJson, expiresAt);
+    } catch {
+      /* cache persistence must never break a request */
+    }
+  }
+
+  cacheDel(key: string): void {
+    try {
+      this.db.prepare("DELETE FROM prompt_cache WHERE key = ?").run(key);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  cacheClear(): void {
+    try {
+      this.db.exec("DELETE FROM prompt_cache");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  cachePruneExpired(now = Date.now()): number {
+    try {
+      const r = this.db.prepare("DELETE FROM prompt_cache WHERE expires_at <= ?").run(now);
+      return Number(r.changes ?? 0);
+    } catch {
+      return 0;
+    }
   }
 
   /** Append an audit event. Never throws. */

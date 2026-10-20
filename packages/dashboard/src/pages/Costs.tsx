@@ -20,7 +20,7 @@ function Overview() {
   const load = () => {
     api.costsSummary().then(setSummary).catch((e) => setError(String(e)));
     api.costsForecast().then((f) => setDaily(f.daily)).catch(() => {});
-    api.cacheStats().then(setCache).catch(() => {});
+    api.cacheStats().then((s) => setCache(s.exact)).catch(() => {});
   };
   useEffect(load, []);
 
