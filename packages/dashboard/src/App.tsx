@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { getAdminKey, setAdminKey } from "./api";
+import { authApi, getAdminKey, getSession, setAdminKey, setSession } from "./api";
+import Login from "./pages/Login";
 import { LanguageProvider, LanguageToggle, useLang } from "./i18n";
 import { initTheme } from "./theme";
 import { ThemeToggle } from "./components/ThemeToggle";
@@ -161,6 +162,18 @@ function AppInner() {
   const { t } = useLang();
   const [tab, setTab] = useState<TabId>("home");
   const [adminKey, setAdminKeyState] = useState(getAdminKey());
+  const [authed, setAuthed] = useState<boolean | null>(null);
+  useEffect(() => {
+    // An admin key in the browser is a full credential — no extra login.
+    if (getAdminKey()) {
+      setAuthed(true);
+      return;
+    }
+    authApi
+      .me()
+      .then(() => setAuthed(true))
+      .catch(() => setAuthed(false));
+  }, []);
   useEffect(() => {
     initTheme();
     // After an OAuth browser round-trip the gateway redirects here with
@@ -183,6 +196,15 @@ function AppInner() {
   }, [tab]);
 
   const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
+
+  if (authed === null) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-3xl text-zinc-500">⚡</div>
+    );
+  }
+  if (!authed) {
+    return <Login onLogin={() => setAuthed(true)} />;
+  }
 
   const go = (id: TabId) => {
     setTab(id);
@@ -273,6 +295,18 @@ function AppInner() {
             <LanguageToggle />
             <ThemeToggle />
           </div>
+          {getSession() && (
+            <button
+              onClick={async () => {
+                await authApi.logout().catch(() => undefined);
+                setSession("");
+                setAuthed(false);
+              }}
+              className="mb-3 w-full rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+            >
+              {t("nav.logout")}
+            </button>
+          )}
           <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
             🔑 {t("header.adminKeyTitle")}
           </label>

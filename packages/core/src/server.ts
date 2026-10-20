@@ -6,6 +6,7 @@ import { PromptCache } from "./cache/index.js";
 import { ProviderEmbedder, SemanticCache } from "./cache/semantic.js";
 import type { AppConfig } from "./config.js";
 import { createAuth } from "./ingress/auth.js";
+import { DashboardSessions, registerDashboardAuthRoutes } from "./ingress/dashboardAuth.js";
 import { registerRoutes } from "./ingress/routes.js";
 import { Inspector } from "./inspect/index.js";
 import { RateLimiter } from "./quota/limiter.js";
@@ -87,7 +88,9 @@ export function createServer(
   const dashboardDir = join(process.cwd(), "packages", "dashboard", "dist");
   const hasDashboard = existsSync(join(dashboardDir, "index.html"));
 
-  app.use(createAuth(store, limiter));
+  const sessions = new DashboardSessions();
+  app.use(createAuth(store, limiter, sessions));
+  registerDashboardAuthRoutes(app, store, sessions);
   registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog });
 
   if (hasDashboard) {

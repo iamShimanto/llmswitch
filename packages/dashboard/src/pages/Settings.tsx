@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type ConfigPatch, type GatewayConfig } from "../api";
+import { api, authApi, setSession, type ConfigPatch, type GatewayConfig } from "../api";
 import { Tabs } from "../components/Tabs";
 import { applyTheme, getTheme, applyPalette, getPalette, type Theme, type Palette } from "../theme";
 
@@ -57,6 +57,21 @@ export default function Settings() {
   // form state
   const [strategy, setStrategy] = useState("");
   const [piiRedact, setPiiRedact] = useState(true);
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  async function changeDashboardPassword() {
+    setPwMsg("");
+    try {
+      const r = await authApi.changePassword(curPw, newPw);
+      setSession(r.token);
+      setCurPw("");
+      setNewPw("");
+      setPwMsg(t("settings.passwordChanged"));
+    } catch {
+      setPwMsg(t("settings.passwordWrong"));
+    }
+  }
   const [compression, setCompression] = useState("");
   const [webhook, setWebhook] = useState("");
   const [budgetAction, setBudgetAction] = useState<"warn" | "block">("warn");
@@ -216,6 +231,18 @@ export default function Settings() {
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={piiRedact} onChange={(e) => setPiiRedact(e.target.checked)} className="h-4 w-4" />{t("common.piiHint")}</label>
             <p className={hint}>{t("common.onByDefault")}</p>
+          </div>
+          <div className={row}>
+            <h2 className="mb-2 font-semibold">🔒 {t("settings.dashboardPassword")}</h2>
+            <p className="mb-3 text-sm text-zinc-400">{t("settings.dashboardPasswordHint")}</p>
+            <label className={label}>{t("settings.currentPassword")}</label>
+            <input type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} className="mb-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
+            <label className={label}>{t("settings.newPassword")}</label>
+            <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm" />
+            <button onClick={changeDashboardPassword} disabled={!curPw || newPw.length < 6} className="rounded-lg bg-zinc-100 px-4 py-1.5 text-sm font-semibold text-zinc-900 disabled:opacity-50">
+              {t("settings.changePassword")}
+            </button>
+            {pwMsg && <p className="mt-2 text-sm text-zinc-300">{pwMsg}</p>}
           </div>
           <div className={row}>
             <h2 className="mb-2 font-semibold">{t("profile.admin_key")}</h2>
