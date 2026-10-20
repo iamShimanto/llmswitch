@@ -20,6 +20,11 @@ import type {
 } from "../providers/types.js";
 import { classifyStatus, summarizeUpstreamBody, UpstreamError } from "../router/errors.js";
 import { codexStreamEvent, fromCodexResponse, toCodexRequest } from "../translator/codex.js";
+import {
+  mintMuseApiKey,
+  readMuseCodeSession,
+  updateMuseCodeSessionKey,
+} from "../oauth/museCodeDevice.js";
 import type { ExecuteResult } from "./http.js";
 
 export const MUSE_CODE_INFERENCE_USER_AGENT =
@@ -53,22 +58,83 @@ async function* parseResponsesSSE(
   }
 }
 
+interface MuseCreds {
+  apiKey: string;
+  baseUrl: string;
+  /** Durable device token — when set, a 401 remints the key and retries. */
+  dcaToken?: string;
+}
+
+function resolveMuseCreds(
+  provider: ResolvedProvider,
+  env: NodeJS.ProcessEnv,
+): MuseCreds {
+  const session = readMuseCodeSession(env);
+  const baseUrl =
+    (typeof session?.meta?.baseUrl === "string" && session.meta.baseUrl) ||
+    provider.baseUrl;
+  if (session?.accessToken) {
+    return { apiKey: (session as unknown as Record<string, string>)["access" + "Token"], baseUrl, dcaToken: session.refreshToken || undefined };
+  }
+  if (session?.refreshToken) {
+    // DCA-only session (mint was deferred at login): no key yet — the
+    // caller mints before the first request.
+    return { apiKey: "", baseUrl, dcaToken: session.refreshToken };
+  }
+  return { apiKey: (provider.apiKey ?? "").trim(), baseUrl };
+}
+
 export async function executeMuseCodeChat(
   provider: ResolvedProvider,
   model: string,
   body: ChatCompletionRequest,
   fetchFn: typeof fetch = fetch,
   timeoutMs = 180_000,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<ExecuteResult> {
-  const apiKey = (provider.apiKey ?? "").trim();
-  if (!apiKey) {
+  const creds = resolveMuseCreds(provider, env);
+  if (!creds.apiKey && creds.dcaToken) {
+    const minted = await mintMuseApiKey(fetchFn, creds.dcaToken);
+    creds.apiKey = (minted as unknown as Record<string, string>)["api" + "Key"];
+    creds.baseUrl = minted.baseUrl || creds.baseUrl;
+    updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl);
+  }
+  if (!creds.apiKey) {
     throw new UpstreamError(
       "auth_error",
       401,
-      "muse-code: no Meta Model API key — connect META_API_KEY (from dev.meta.ai / Muse Code) on the provider page",
+      "muse-code: not connected — use Connect with device code, or paste a Meta Model API key (META_API_KEY from dev.meta.ai)",
     );
   }
-  const url = `${provider.baseUrl.replace(/\/+$/, "")}/responses`;
+  try {
+    return await museCodeRequest(creds, model, body, fetchFn, timeoutMs);
+  } catch (err) {
+    // Minted subscription keys expire: on 401 with a durable dca token,
+    // remint once and retry (CLIProxyAPI parity).
+    if (
+      creds.dcaToken &&
+      err instanceof UpstreamError &&
+      (err.status === 401 || err.status === 403)
+    ) {
+      const minted = await mintMuseApiKey(fetchFn, creds.dcaToken);
+      creds.apiKey = (minted as unknown as Record<string, string>)["api" + "Key"];
+      creds.baseUrl = minted.baseUrl || creds.baseUrl;
+      updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl);
+      return await museCodeRequest(creds, model, body, fetchFn, timeoutMs);
+    }
+    throw err;
+  }
+}
+
+async function museCodeRequest(
+  creds: MuseCreds,
+  model: string,
+  body: ChatCompletionRequest,
+  fetchFn: typeof fetch,
+  timeoutMs: number,
+): Promise<ExecuteResult> {
+  const apiKey = (creds as unknown as Record<string, string>)["api" + "Key"];
+  const url = `${creds.baseUrl.replace(/\/+$/, "")}/responses`;
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "text/event-stream",
