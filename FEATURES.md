@@ -486,3 +486,18 @@ Upstream realities the gateway now routes around (not gateway bugs):
 Kilo demands sign-in for most non-:free models, Pollinations moved
 models behind x402 payment, LLM7's daily quota was exhausted.
 Core suite: 489/489.
+
+## Media page model picker (2026-10-21)
+
+The Media page (Image / Audio / Video generation tester) previously
+sent requests with no model, so the gateway silently picked its
+default media provider. It now has a per-tab model picker:
+
+- Models load from GET /v1/models with the pasted gateway key and are
+  filtered per tab with the same capability regexes as the Models
+  page (image / TTS / video), shown as provider:model ids.
+- "Auto (gateway default)" preserves the old behavior (no model
+  field sent); picking a model pins the request to provider:model.
+- The selection is remembered per tab in localStorage
+  (llmswitch_media_model); a saved model that disappears from the
+  list falls back to Auto.
