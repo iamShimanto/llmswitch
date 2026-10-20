@@ -60,6 +60,7 @@ export default function Models() {
   const [providerFilter, setProviderFilter] = useState("");
   const [cap, setCap] = useState<string | null>(null);
   const [freeOnly, setFreeOnly] = useState(false);
+  const [typeFilter, setTypeFilter] = useState<"all" | "combo" | "auto" | "model">("all");
   const [tests, setTests] = useState<Record<string, { state: "running" | "ok" | "fail"; msg?: string }>>({});
 
   useEffect(() => {
@@ -150,6 +151,9 @@ export default function Models() {
   const shown = useMemo(
     () =>
       items.filter((it) => {
+        if (typeFilter === "combo" && it.kind !== "combo" && it.kind !== "pipeline") return false;
+        if (typeFilter === "auto" && it.kind !== "auto") return false;
+        if (typeFilter === "model" && it.kind !== "model") return false;
         if (q && !it.name.toLowerCase().includes(q) && !it.chips.some((c) => c.label.toLowerCase().includes(q)))
           return false;
         if (it.kind === "model") {
@@ -161,7 +165,7 @@ export default function Models() {
         }
         return true;
       }),
-    [items, q, providerFilter, cap, freeOnly],
+    [items, q, providerFilter, cap, freeOnly, typeFilter],
   );
 
   const runTest = async (it: Item) => {
@@ -305,6 +309,22 @@ export default function Models() {
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
         </select>
+      </div>
+
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <span className="text-xs font-medium text-zinc-500">Type:</span>
+        <button onClick={() => setTypeFilter("all")} className={chipBtn(typeFilter === "all")}>
+          All ({items.length.toLocaleString()})
+        </button>
+        <button onClick={() => setTypeFilter("combo")} className={chipBtn(typeFilter === "combo")}>
+          🧬 Combos ({combos.length})
+        </button>
+        <button onClick={() => setTypeFilter("auto")} className={chipBtn(typeFilter === "auto")}>
+          ✨ Auto ({autos.length})
+        </button>
+        <button onClick={() => setTypeFilter("model")} className={chipBtn(typeFilter === "model")}>
+          🧠 Models ({modelCount.toLocaleString()})
+        </button>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-1.5">
