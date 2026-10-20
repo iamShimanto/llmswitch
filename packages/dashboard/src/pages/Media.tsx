@@ -31,6 +31,15 @@ async function postV1(path: string, gwKey: string, body: unknown): Promise<{ ok:
       body: JSON.stringify(body),
     });
     const text = await res.text();
+    // Proxy/gateway failures can come back as an HTML error page
+    // (Cloudflare 502/524) — never dump raw HTML into the result box.
+    if (text.trimStart().startsWith("<")) {
+      const title = /<title>([^<]+)<\/title>/i.exec(text)?.[1]?.trim();
+      return {
+        ok: false,
+        text: `${title ? `${title} — ` : ""}the request failed at the proxy: the provider took too long to respond, or the gateway was unreachable. Try again, or pick another model.`,
+      };
+    }
     return { ok: res.ok, text: text.slice(0, 2000) };
   } catch (e) {
     return { ok: false, text: String(e) };
