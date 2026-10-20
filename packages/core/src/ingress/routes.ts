@@ -2316,6 +2316,18 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json({ cleared: true });
   });
 
+  // ---- Circuit breakers (rotation v2) ----
+  app.get("/api/circuit-breakers", (_req: Request, res: Response) => {
+    res.json({ breakers: router.breakerSnapshot() });
+  });
+
+  app.post("/api/circuit-breakers/reset", (req: Request, res: Response) => {
+    const key = typeof req.body?.key === "string" && req.body.key ? req.body.key : undefined;
+    router.resetBreaker(key);
+    store.audit("breaker.reset", null, key ?? "all");
+    res.json({ ok: true });
+  });
+
   // ---- Audit log ----
   app.get("/api/audit", (req: Request, res: Response) => {
     const limit = Math.min(Number(req.query.limit ?? 100), 500);
