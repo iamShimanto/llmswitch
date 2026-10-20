@@ -250,6 +250,19 @@ function ProviderDetail({
   };
   const { t } = useLang();
   const [models, setModels] = useState<string[]>(p.models);
+  const [defaultModel, setDefaultModelState] = useState(p.defaultModel);
+  useEffect(() => {
+    setDefaultModelState(p.defaultModel);
+  }, [p.defaultModel]);
+  const setDefault = async (m: string) => {
+    try {
+      const r = await api.setDefaultModel(p.id, m);
+      setDefaultModelState(r.defaultModel);
+      onChanged();
+    } catch {
+      /* ignore */
+    }
+  };
   const [discovering, setDiscovering] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string>("");
@@ -551,6 +564,9 @@ function ProviderDetail({
                   <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200" title={m}>
                     {m}
                   </span>
+                  {m === defaultModel && (
+                    <span className="shrink-0 rounded-full bg-amber-900/60 px-2 py-0.5 text-[11px] font-medium text-amber-300">Default</span>
+                  )}
                   {r?.state === "ok" && (
                     <span className="shrink-0 text-xs text-emerald-400">✓ works · {r.latencyMs} ms</span>
                   )}
@@ -558,6 +574,15 @@ function ProviderDetail({
                     <span className="max-w-56 shrink-0 truncate text-xs text-red-400" title={r.error}>
                       ✗ {r.error}
                     </span>
+                  )}
+                  {m !== defaultModel && (
+                    <button
+                      onClick={() => setDefault(m)}
+                      className="shrink-0 rounded-lg border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800"
+                      title="Use this model when a request names the provider without a model"
+                    >
+                      Set default
+                    </button>
                   )}
                   <button
                     onClick={() => testModel(m)}

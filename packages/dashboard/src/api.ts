@@ -235,6 +235,13 @@ export const api = {
   updateAccount: (id: string, patch: { label?: string; enabled?: boolean }) =>
     req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "POST", body: JSON.stringify(patch) }),
   deleteAccount: (id: string) => req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" }),
+  setDefaultModel: (id: string, model: string) =>
+    req<{ ok: boolean; defaultModel: string }>(`/api/providers/${id}/default-model`, {
+      method: "POST",
+      body: JSON.stringify({ model }),
+    }),
+  resetDefaultModel: (id: string) =>
+    req<{ ok: boolean; defaultModel: string }>(`/api/providers/${id}/default-model`, { method: "DELETE" }),
   routingRules: () => req<{ rules: RoutingRule[] }>("/api/routing-rules"),
   addRoutingRule: (pattern: string, providers: string[], strategy?: string) =>
     req<{ ok: boolean; rule: RoutingRule }>("/api/routing-rules", {

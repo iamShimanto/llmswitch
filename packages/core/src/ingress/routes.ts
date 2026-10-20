@@ -1605,7 +1605,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         envKey: d.envKey,
         // Live providers carry discovered/imported models merged in.
         models: liveById.get(d.id)?.models ?? d.models,
-        defaultModel: d.defaultModel,
+        // The resolved provider carries any user default-model override.
+        defaultModel: liveById.get(d.id)?.defaultModel ?? d.defaultModel,
         connected: connectedIds.has(d.id),
         disabled: Boolean(d.disabled),
       })),
@@ -1644,6 +1645,41 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     store.audit("provider.key_saved", def.id, `env ${def.envKey}`);
     deps.refreshProviders?.();
     res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
+  // Per-provider default model override (used when a request names the
+  // provider without a model, and shown as the provider's default).
+  app.post("/api/providers/:id/default-model", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const model = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+    const resolved = providers.find((x) => x.id === def.id);
+    const known = resolved?.models ?? def.models;
+    if (!model || !known.includes(model)) {
+      res.status(400).json({
+        error: { message: `model must be one of this provider's known models`, type: "bad_request" },
+      });
+      return;
+    }
+    store.setSetting(`default_model:${def.id}`, model);
+    store.audit("provider.default_model", def.id, model);
+    deps.refreshProviders?.();
+    res.json({ ok: true, defaultModel: providers.find((x) => x.id === def.id)?.defaultModel ?? model });
+  });
+
+  app.delete("/api/providers/:id/default-model", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    store.setSetting(`default_model:${def.id}`, "");
+    store.audit("provider.default_model_reset", def.id);
+    deps.refreshProviders?.();
+    res.json({ ok: true, defaultModel: providers.find((x) => x.id === def.id)?.defaultModel ?? def.defaultModel });
   });
 
   // Token-paste connect for OAuth providers without a browser flow

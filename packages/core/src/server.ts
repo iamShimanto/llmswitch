@@ -186,6 +186,11 @@ export function createServer(
         /* corrupted setting: ignore */
       }
     }
+    // User-chosen default model per provider (dashboard model rows).
+    for (const p of fresh) {
+      const dm = store.getSetting(`default_model:${p.id}`);
+      if (dm && p.models.includes(dm)) p.defaultModel = dm;
+    }
     providers.splice(0, providers.length, ...fresh);
   };
   refreshProviders();
