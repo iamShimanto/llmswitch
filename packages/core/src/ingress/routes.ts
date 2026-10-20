@@ -5,6 +5,7 @@ import { chatToResponses, responsesToChat } from "./responses.js";
 import { fetchPageText, mapSiteLinks, webSearch } from "../search/index.js";
 import { RoutingEventLog } from "../router/events.js";
 import { antigravityAccountQuotas } from "../quota/antigravityQuota.js";
+import { AUTO_TEMPLATES, autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import type { Alerter } from "../alerts/index.js";
 import { costUsd } from "../billing/prices.js";
 import type { PromptCache } from "../cache/index.js";
@@ -115,10 +116,21 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/v1/models", (_req: Request, res: Response) => {
     const comboModels = store
       .listCombos()
-      .filter((c) => c.kind === "router" || c.targets)
-      .map((c) => ({ id: c.name, object: "model", owned_by: "llmswitch-combo" }));
+      .filter((c) => (c.kind === "router" || c.targets) && c.enabled !== false)
+      .map((c) => ({
+        id: c.name,
+        object: "model",
+        owned_by: "llmswitch-combo",
+        ...(c.config?.contextLength ? { context_length: c.config.contextLength } : {}),
+      }));
+    const autoModels = AUTO_TEMPLATES.map((t) => ({
+      id: t.id,
+      object: "model",
+      owned_by: "llmswitch-auto",
+    }));
     const data = [
       { id: "auto", object: "model", owned_by: "llmswitch" },
+      ...autoModels,
       ...comboModels,
       ...providers.flatMap((p) =>
         p.models.map((m) => ({ id: `${p.id}:${m}`, object: "model", owned_by: p.id })),
@@ -2508,6 +2520,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         strategy: c.strategy ?? null,
         targets: c.targets ?? null,
         steps: c.steps ?? null,
+        config: c.config ?? null,
+        enabled: c.enabled !== false,
       })),
     });
   });
@@ -2520,6 +2534,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           kind: "router",
           strategy: v.strategy,
           targets: v.targets,
+          config: v.config,
+          enabled: v.enabled,
         });
         store.audit("combo.created", req.apiKey?.id ?? null, `name=${v.name} kind=router`);
         res.status(201).json({ name: v.name, kind: "router", strategy: v.strategy, targets: v.targets });
@@ -2532,41 +2548,114 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: { message: (e as Error).message, type: "bad_request" } });
     }
   });
-  // Probe a router combo through the real router (dashboard Test button).
+  // OmniRoute-style combo test: probe EVERY target individually and
+  // report which one the combo would resolve to (first healthy target).
+  async function testComboTargets(name: string, message: string) {
+    const def = store.getCombo(name);
+    let targets: Array<{ model: string; accountId?: string | null }> | null = null;
+    if (def && (def.kind === "router" || def.targets)) {
+      targets = def.targets ?? [];
+    } else if (name.startsWith("auto/")) {
+      const template = autoTemplate(name);
+      if (template) targets = buildAutoTargets(template, providers);
+    }
+    if (!targets) return null;
+    const norm = (m: string) => {
+      if (m.includes(":")) return m;
+      const slash = m.indexOf("/");
+      if (slash > 0 && providers.some((p) => p.id === m.slice(0, slash))) {
+        return `${m.slice(0, slash)}:${m.slice(slash + 1)}`;
+      }
+      return m;
+    };
+    const results: Array<Record<string, unknown>> = [];
+    let resolvedBy: Record<string, unknown> | null = null;
+    for (const t of targets) {
+      const started = Date.now();
+      try {
+        const r = await router.route(
+          { model: norm(t.model), messages: [{ role: "user", content: message }] },
+          { bypassCache: true, timeoutMs: 30_000, forceAccountId: t.accountId ?? undefined },
+        );
+        const entry = {
+          target: t.model,
+          accountId: t.accountId ?? null,
+          ok: true,
+          provider: r.providerId,
+          model: r.model,
+          latencyMs: Date.now() - started,
+          text: (r.response?.choices?.[0]?.message?.content ?? "").slice(0, 120),
+        };
+        results.push(entry);
+        if (!resolvedBy) {
+          resolvedBy = { target: t.model, provider: r.providerId, model: r.model };
+        }
+      } catch (e) {
+        results.push({
+          target: t.model,
+          accountId: t.accountId ?? null,
+          ok: false,
+          latencyMs: Date.now() - started,
+          error: (e as Error).message.slice(0, 200),
+        });
+      }
+    }
+    const first = results.find((r) => r.ok);
+    return {
+      ok: results.some((r) => r.ok),
+      combo: name,
+      resolvedBy,
+      results,
+      // legacy single-result fields (first healthy target)
+      provider: first?.provider,
+      model: first?.model,
+      latencyMs: first?.latencyMs,
+      text: first?.text,
+    };
+  }
   app.post("/api/combos/:name/test", async (req: Request, res: Response) => {
-    const def = store.getCombo(req.params.name);
-    if (!def || !(def.kind === "router" || def.targets)) {
+    const message = typeof req.body?.message === "string" && req.body.message ? req.body.message : "Say ok";
+    const out = await testComboTargets(req.params.name, message);
+    if (!out) {
       res.status(404).json({ error: { message: "unknown router combo", type: "not_found" } });
       return;
     }
+    res.json(out);
+  });
+  // Body-name variant (combo names may contain "/").
+  app.post("/api/combos/test", async (req: Request, res: Response) => {
+    const name = typeof req.body?.name === "string" ? req.body.name : "";
     const message = typeof req.body?.message === "string" && req.body.message ? req.body.message : "Say ok";
-    const started = Date.now();
-    try {
-      const r = await router.route(
-        { model: def.name, messages: [{ role: "user", content: message }] },
-        { bypassCache: true, timeoutMs: 45_000 },
-      );
-      const text = (r.response?.choices?.[0]?.message?.content ?? "").slice(0, 200);
-      res.json({
-        ok: true,
-        combo: def.name,
-        provider: r.providerId,
-        model: r.model,
-        latencyMs: Date.now() - started,
-        text,
-      });
-    } catch (e) {
-      res.json({
-        ok: false,
-        combo: def.name,
-        latencyMs: Date.now() - started,
-        error: (e as Error).message.slice(0, 300),
-      });
+    const out = name ? await testComboTargets(name, message) : null;
+    if (!out) {
+      res.status(404).json({ error: { message: "unknown router combo", type: "not_found" } });
+      return;
     }
+    res.json(out);
+  });
+  // Built-in auto/* catalog with live candidate counts (dashboard).
+  app.get("/api/combos/auto-catalog", (_req: Request, res: Response) => {
+    res.json({
+      templates: AUTO_TEMPLATES.map((t) => ({
+        id: t.id,
+        title: t.title,
+        tags: t.tags,
+        systemPrompt: t.systemPrompt,
+        strategy: "weighted",
+        candidates: buildAutoTargets(t, providers).length,
+      })),
+    });
   });
   app.delete("/api/combos/:name", (req: Request, res: Response) => {
     const ok = store.deleteCombo(req.params.name);
     if (ok) store.audit("combo.deleted", req.apiKey?.id ?? null, `name=${req.params.name}`);
+    res.status(ok ? 200 : 404).json({ deleted: ok });
+  });
+  // Query variant for names containing "/".
+  app.delete("/api/combos", (req: Request, res: Response) => {
+    const name = typeof req.query.name === "string" ? req.query.name : "";
+    const ok = name ? store.deleteCombo(name) : false;
+    if (ok) store.audit("combo.deleted", req.apiKey?.id ?? null, `name=${name}`);
     res.status(ok ? 200 : 404).json({ deleted: ok });
   });
   app.post("/v1/combos/:name/run", async (req: Request, res: Response) => {

@@ -955,8 +955,14 @@ export interface ComboDefinition {
   description?: string;
   kind?: "router" | "pipeline";
   strategy?: string;
-  targets?: Array<{ model: string; weight?: number }>;
+  targets?: Array<{ model: string; weight?: number; accountId?: string | null }>;
   steps?: Array<{ model: string; system?: string }>;
+  config?: {
+    systemPrompt?: string;
+    contextLength?: number;
+    validation?: { forbidden?: string[]; required?: string[]; minLength?: number };
+  };
+  enabled?: boolean;
 }
 
 export interface StoredCombo extends ComboDefinition {

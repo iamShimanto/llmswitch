@@ -10,6 +10,7 @@ import {
   type Combo,
 } from "../src/combos/index.js";
 import { createRouter } from "../src/router/index.js";
+import { autoTemplate, buildAutoTargets, classifyModel } from "../src/combos/autoCatalog.js";
 import type { ResolvedProvider } from "../src/providers/types.js";
 import { Store } from "../src/store/db.js";
 import type { Router } from "../src/router/index.js";
@@ -244,5 +245,240 @@ describe("router combo execution", () => {
     });
     const r = await router.route(chatBody, { fetchFn });
     expect(r.response?.choices[0]?.message.content).toBe("deep");
+  });
+});
+
+
+describe("validateAnyCombo v2 (accounts/config/slash names)", () => {
+  it("accepts slash names and account pins, rejects auto/ and colons", () => {
+    const v = validateAnyCombo({
+      name: "shimanto/main",
+      targets: [{ model: "antigravity/claude-sonnet-4-6", accountId: "acct_1" }],
+    });
+    expect(v.kind).toBe("router");
+    if (v.kind === "router") expect(v.targets[0]!.accountId).toBe("acct_1");
+    expect(() => validateAnyCombo({ name: "auto/x", targets: [{ model: "a:b" }] })).toThrow();
+    expect(() => validateAnyCombo({ name: "a:b", targets: [{ model: "a:b" }] })).toThrow();
+  });
+
+  it("sanitizes config (system prompt, validation, context length)", () => {
+    const v = validateAnyCombo({
+      name: "guarded",
+      targets: [{ model: "a:b" }],
+      config: {
+        systemPrompt: "Be terse.",
+        contextLength: 128000,
+        validation: { forbidden: ["I cannot help"], minLength: 3 },
+      },
+    });
+    if (v.kind === "router") {
+      expect(v.config?.systemPrompt).toBe("Be terse.");
+      expect(v.config?.validation?.forbidden).toEqual(["I cannot help"]);
+      expect(v.config?.contextLength).toBe(128000);
+    }
+  });
+});
+
+describe("orderComboTargets v2", () => {
+  const ctx = {
+    providerCalls: (pid: string) => (pid === "busy" ? 40 : 1),
+    providerOf: (m: string) => m.split(":")[0]!,
+    providerTier: () => 3,
+    quotaShare: (m: string) => (m.startsWith("full") ? 0.9 : m.startsWith("low") ? 0.1 : null),
+    cursor: 0,
+  };
+  it("headroom leads with the fullest quota", () => {
+    const out = orderComboTargets("headroom", [{ model: "low:m" }, { model: "full:m" }, { model: "unk:m" }], ctx);
+    expect(out[0]!.model).toBe("full:m");
+    expect(out[out.length - 1]!.model).toBe("low:m");
+  });
+  it("strict-random keeps every target", () => {
+    const out = orderComboTargets("strict-random", [{ model: "a:m" }, { model: "b:m" }], { ...ctx, random: () => 0.4 });
+    expect(out).toHaveLength(2);
+  });
+});
+
+describe("auto catalog", () => {
+  const mk = (id: string, models: string[], costTier: number, authType?: string): ResolvedProvider =>
+    ({
+      id,
+      name: id,
+      baseUrl: `https://${id}.example/v1`,
+      wireFormat: "openai",
+      models,
+      defaultModel: models[0],
+      costTier,
+      authType,
+      apiKey: "k",
+      allKeys: ["k"],
+    }) as ResolvedProvider;
+
+  it("classifies model capabilities", () => {
+    expect(classifyModel("qwen2.5-coder-32b").coding).toBe(true);
+    expect(classifyModel("deepseek-r1").reasoning).toBe(true);
+    expect(classifyModel("gemini-2.5-flash").fast).toBe(true);
+  });
+
+  it("best-coding picks coder models; best-free sticks to cheap tiers", () => {
+    const providers = [
+      mk("prov-a", ["qwen-coder-32b", "plain-chat"], 4),
+      mk("prov-b", ["llama-3.1-8b"], 1),
+    ];
+    const coding = buildAutoTargets(autoTemplate("auto/best-coding")!, providers);
+    expect(coding.map((t) => t.model)).toContain("prov-a:qwen-coder-32b");
+    const free = buildAutoTargets(autoTemplate("auto/best-free")!, providers);
+    expect(free.every((t) => t.model.startsWith("prov-b:"))).toBe(true);
+  });
+
+  it("auto/best-fast resolves through the router", async () => {
+    const fetchFn = (async () => jsonResponseAuto("auto-ok")) as unknown as typeof fetch;
+    const router = createRouter([mk("prov-b", ["llama-flash-8b"], 1)]);
+    const r = await router.route(
+      { model: "auto/best-fast", messages: [{ role: "user", content: "hi" }] },
+      { fetchFn },
+    );
+    expect(r.providerId).toBe("prov-b");
+  });
+});
+
+function jsonResponseAuto(text: string): Response {
+  return new Response(
+    JSON.stringify({
+      id: "x",
+      model: "m",
+      choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
+describe("router combo v2 behaviors", () => {
+  function rprov(id: string, model: string, extra: Partial<ResolvedProvider> = {}): ResolvedProvider {
+    return {
+      id,
+      name: id,
+      baseUrl: `https://${id}.example/v1`,
+      wireFormat: "openai",
+      models: [model],
+      defaultModel: model,
+      costTier: 3,
+      apiKey: "k",
+      allKeys: ["k"],
+      ...extra,
+    } as ResolvedProvider;
+  }
+  const bodyFor = (name: string) => ({
+    model: name,
+    messages: [{ role: "user" as const, content: "hi" }],
+  });
+
+  it("response validation fails over to the next target", async () => {
+    const fetchFn = (async (url: string) =>
+      String(url).includes("prov-a") ? jsonResponseAuto("I cannot help with that") : jsonResponseAuto("sure thing")) as typeof fetch;
+    const router = createRouter([rprov("prov-a", "ma"), rprov("prov-b", "mb")], {
+      combos: () => [
+        {
+          name: "guarded",
+          kind: "router",
+          strategy: "priority",
+          targets: [{ model: "prov-a:ma" }, { model: "prov-b:mb" }],
+          config: { validation: { forbidden: ["I cannot help"] } },
+          createdAt: 1,
+        },
+      ],
+    });
+    const r = await router.route(bodyFor("guarded"), { fetchFn });
+    expect(r.providerId).toBe("prov-b");
+  });
+
+  it("system prompt override replaces the system message", async () => {
+    let seenSystem = "";
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      seenSystem = parsed.messages.find((m) => m.role === "system")?.content ?? "";
+      return jsonResponseAuto("ok");
+    }) as typeof fetch;
+    const router = createRouter([rprov("prov-a", "ma")], {
+      combos: () => [
+        {
+          name: "terse",
+          kind: "router",
+          strategy: "priority",
+          targets: [{ model: "prov-a:ma" }],
+          config: { systemPrompt: "Be terse." },
+          createdAt: 1,
+        },
+      ],
+    });
+    await router.route(
+      {
+        model: "terse",
+        messages: [
+          { role: "system", content: "Be verbose." },
+          { role: "user", content: "hi" },
+        ],
+      },
+      { fetchFn },
+    );
+    expect(seenSystem).toBe("Be terse.");
+  });
+
+  it("account pin forces the pinned key account", async () => {
+    const seen: string[] = [];
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      const h = (init?.headers ?? {}) as Record<string, string>;
+      seen.push(h.authorization ?? h.Authorization ?? "");
+      return jsonResponseAuto("ok");
+    }) as typeof fetch;
+    const prov = rprov("prov-a", "ma", {
+      apiKey: "key-one",
+      allKeys: ["key-one", "key-two"],
+      keyAccounts: new Map([
+        ["key-one", "acct_1"],
+        ["key-two", "acct_2"],
+      ]),
+    });
+    const router = createRouter([prov], {
+      combos: () => [
+        {
+          name: "pinned",
+          kind: "router",
+          strategy: "priority",
+          targets: [{ model: "prov-a:ma", accountId: "acct_2" }],
+          createdAt: 1,
+        },
+      ],
+    });
+    await router.route(bodyFor("pinned"), { fetchFn });
+    expect(seen).toEqual(["Bearer key-two"]);
+  });
+
+  it("disabled combos are not resolved as combos", async () => {
+    let injected = false;
+    const fetchFn = (async (_url: string, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body ?? "{}")) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      if (parsed.messages.some((m) => m.content === "COMBO-MARKER")) injected = true;
+      return jsonResponseAuto("ok");
+    }) as typeof fetch;
+    const router = createRouter([rprov("prov-a", "ma")], {
+      combos: () => [
+        {
+          name: "off",
+          kind: "router",
+          strategy: "priority",
+          targets: [{ model: "prov-a:ma" }],
+          config: { systemPrompt: "COMBO-MARKER" },
+          enabled: false,
+          createdAt: 1,
+        },
+      ],
+    });
+    await router.route(bodyFor("off"), { fetchFn }).catch(() => {});
+    expect(injected).toBe(false);
   });
 });

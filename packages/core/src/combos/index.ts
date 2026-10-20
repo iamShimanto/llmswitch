@@ -113,7 +113,11 @@ export type ComboStrategy =
   | "random"
   | "least-used"
   | "cost-optimized"
-  | "fill-first";
+  | "fill-first"
+  | "p2c"
+  | "headroom"
+  | "context-relay"
+  | "strict-random";
 
 export const COMBO_STRATEGIES: ComboStrategy[] = [
   "priority",
@@ -123,6 +127,10 @@ export const COMBO_STRATEGIES: ComboStrategy[] = [
   "least-used",
   "cost-optimized",
   "fill-first",
+  "p2c",
+  "headroom",
+  "context-relay",
+  "strict-random",
 ];
 
 export function isComboStrategy(v: unknown): v is ComboStrategy {
@@ -130,10 +138,29 @@ export function isComboStrategy(v: unknown): v is ComboStrategy {
 }
 
 export interface ComboTarget {
-  /** "provider:model", a bare model id, "auto", or another combo name */
+  /** "provider:model" (or OmniRoute-style "provider/model"), a bare model id, "auto", or another combo name */
   model: string;
   /** weighted strategy only; default 1 */
   weight?: number;
+  /** pin this target to one specific account (null/absent = dynamic) */
+  accountId?: string | null;
+}
+
+export interface ComboValidation {
+  /** fail over when the reply contains any of these */
+  forbidden?: string[];
+  /** fail over unless the reply contains ALL of these */
+  required?: string[];
+  /** fail over when the reply is shorter than this */
+  minLength?: number;
+}
+
+export interface ComboConfig {
+  /** replaces (or becomes) the system message for requests via this combo */
+  systemPrompt?: string;
+  /** advertised context window for /v1/models */
+  contextLength?: number;
+  validation?: ComboValidation;
 }
 
 export interface RouterCombo {
@@ -142,12 +169,22 @@ export interface RouterCombo {
   kind: "router";
   strategy: ComboStrategy;
   targets: ComboTarget[];
+  config?: ComboConfig;
+  enabled?: boolean;
   createdAt: number;
 }
 
 export type ValidatedCombo =
   | { kind: "pipeline"; name: string; description?: string; steps: ComboStep[] }
-  | { kind: "router"; name: string; description?: string; strategy: ComboStrategy; targets: ComboTarget[] };
+  | {
+      kind: "router";
+      name: string;
+      description?: string;
+      strategy: ComboStrategy;
+      targets: ComboTarget[];
+      config?: ComboConfig;
+      enabled?: boolean;
+    };
 
 /** Validate either combo flavour (targets = router combo, steps = pipeline). */
 export function validateAnyCombo(input: unknown): ValidatedCombo {
@@ -155,8 +192,15 @@ export function validateAnyCombo(input: unknown): ValidatedCombo {
   const o = input as Record<string, unknown>;
   if (Array.isArray(o.targets)) {
     const name = typeof o.name === "string" ? o.name.trim() : "";
-    if (!/^[a-z0-9][a-z0-9-_]{1,63}$/.test(name)) {
-      throw new Error("invalid combo name (lowercase letters, digits, - and _)");
+    // Router combo names may carry a namespace slash (e.g. "team/main"),
+    // but never ":" (pinned syntax) and never the reserved auto/ prefix.
+    if (
+      !/^[a-z0-9][a-z0-9-_/.]{1,63}$/.test(name) ||
+      name.includes(":") ||
+      name === "auto" ||
+      name.startsWith("auto/")
+    ) {
+      throw new Error("invalid combo name (lowercase letters, digits, -, _, / and .; auto/ is reserved)");
     }
     if (o.targets.length < 1 || o.targets.length > 20) {
       throw new Error("targets must be an array of 1-20 entries");
@@ -171,11 +215,41 @@ export function validateAnyCombo(input: unknown): ValidatedCombo {
       if (typeof to.weight === "number" && Number.isFinite(to.weight) && to.weight > 0) {
         target.weight = to.weight;
       }
+      if (typeof to.accountId === "string" && to.accountId) target.accountId = to.accountId;
       return target;
     });
     const strategy = isComboStrategy(o.strategy) ? o.strategy : "priority";
     const description = typeof o.description === "string" ? o.description.trim() || undefined : undefined;
-    return { kind: "router", name, description, strategy, targets };
+    let config: ComboConfig | undefined;
+    if (typeof o.config === "object" && o.config !== null) {
+      const co = o.config as Record<string, unknown>;
+      config = {};
+      if (typeof co.systemPrompt === "string" && co.systemPrompt.trim()) {
+        config.systemPrompt = co.systemPrompt.trim().slice(0, 4000);
+      }
+      if (typeof co.contextLength === "number" && co.contextLength > 0) {
+        config.contextLength = Math.floor(co.contextLength);
+      }
+      if (typeof co.validation === "object" && co.validation !== null) {
+        const vo = co.validation as Record<string, unknown>;
+        const validation: ComboValidation = {};
+        const strList = (v: unknown) =>
+          Array.isArray(v)
+            ? v.filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()).slice(0, 20)
+            : [];
+        const forbidden = strList(vo.forbidden);
+        const required = strList(vo.required);
+        if (forbidden.length) validation.forbidden = forbidden;
+        if (required.length) validation.required = required;
+        if (typeof vo.minLength === "number" && vo.minLength > 0) {
+          validation.minLength = Math.floor(vo.minLength);
+        }
+        if (Object.keys(validation).length) config.validation = validation;
+      }
+      if (!Object.keys(config).length) config = undefined;
+    }
+    const enabled = typeof o.enabled === "boolean" ? o.enabled : undefined;
+    return { kind: "router", name, description, strategy, targets, config, enabled };
   }
   const v = validateCombo(input);
   return { kind: "pipeline", name: v.name, description: v.description, steps: v.steps };
@@ -188,6 +262,8 @@ export interface ComboOrderContext {
   providerTier: (model: string) => number;
   /** resolve a target model to a provider id (for least-used); "" when unknown */
   providerOf: (model: string) => string;
+  /** remaining-quota share 0..1 for a target model (headroom); null = unknown */
+  quotaShare?: (model: string) => number | null;
   /** rotating cursor for round-robin */
   cursor: number;
   /** random source (injectable for tests) */
@@ -232,6 +308,28 @@ export function orderComboTargets(
       }
       return [list[pick]!, ...list.filter((_, i) => i !== pick)];
     }
+    case "strict-random":
+      return orderComboTargets("random", list, ctx);
+    case "p2c": {
+      // power of two choices: sample two, lead with the less-called one.
+      if (list.length < 3) return list;
+      const i = Math.floor(rand() * list.length);
+      let j = Math.floor(rand() * list.length);
+      if (j === i) j = (j + 1) % list.length;
+      const ci = ctx.providerCalls(ctx.providerOf(list[i]!.model));
+      const cj = ctx.providerCalls(ctx.providerOf(list[j]!.model));
+      const lead = ci <= cj ? i : j;
+      return [list[lead]!, ...list.filter((_, k) => k !== lead)];
+    }
+    case "headroom":
+      // most remaining quota first; unknown quota counts as half.
+      return list
+        .map((t, i) => ({ t, i, share: ctx.quotaShare?.(t.model) ?? null }))
+        .sort((a, b) => (b.share ?? 0.5) - (a.share ?? 0.5) || a.i - b.i)
+        .map((x) => x.t);
+    case "context-relay":
+      // the router moves the last winning target to the front beforehand
+      return list;
     case "least-used":
       return list
         .map((t, i) => ({ t, i, calls: ctx.providerCalls(ctx.providerOf(t.model)) }))

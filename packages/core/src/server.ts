@@ -142,6 +142,8 @@ export function createServer(
           kind: "router" as const,
           strategy: (c.strategy ?? "priority") as RouterCombo["strategy"],
           targets: c.targets!,
+          config: c.config,
+          enabled: c.enabled,
           createdAt: c.createdAt,
         })),
   });
