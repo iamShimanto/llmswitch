@@ -211,10 +211,7 @@ function ProviderDetail({
             </>
           ) : p.authType === "oauth" ? (
             ["antigravity", "claude", "codex"].includes(p.id) ? (
-              <p className="text-sm text-zinc-400">
-                This provider connects with OAuth — use the Connect panel at the top of the
-                Providers page, then come back here to test its models.
-              </p>
+              <OAuthConnectCard cfg={OAUTH_PANEL.find((c) => c.id === p.id)!} />
             ) : (
               <>
                 <p className="mb-3 text-sm text-zinc-400">
