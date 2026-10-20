@@ -1,9 +1,138 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type InspectEntry } from "../api";
+import { api, type InspectEntry, type KeyRecord, type RequestLogRow } from "../api";
 import { Tabs, TabEmpty } from "../components/Tabs";
 
 const LEVELS = ["debug", "info", "warn", "error"] as const;
+
+const LOG_PAGE_SIZE = 25;
+
+function RequestLogs() {
+  const { t } = useLang();
+  const [logs, setLogs] = useState<RequestLogRow[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [q, setQ] = useState("");
+  const [provider, setProvider] = useState("");
+  const [status, setStatus] = useState("");
+  const [keyId, setKeyId] = useState("");
+  const [providerIds, setProviderIds] = useState<string[]>([]);
+  const [keys, setKeys] = useState<KeyRecord[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [error, setError] = useState("");
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    api.providers().then((ps) => setProviderIds(ps.map((p) => p.id).sort())).catch(() => {});
+    api.keys().then(setKeys).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setError("");
+    api
+      .logs({
+        q: q || undefined,
+        provider: provider || undefined,
+        status: status || undefined,
+        key: keyId || undefined,
+        limit: LOG_PAGE_SIZE,
+        offset: page * LOG_PAGE_SIZE,
+      })
+      .then((r) => {
+        setLogs(r.logs);
+        setTotal(r.total);
+      })
+      .catch((e) => setError(String(e)));
+  }, [q, provider, status, keyId, page, tick]);
+
+  const pages = Math.max(1, Math.ceil(total / LOG_PAGE_SIZE));
+  const inputCls = "rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm";
+  const filtered = <T,>(setter: (v: T) => void) => (v: T) => { setter(v); setPage(0); };
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <span className="text-sm text-zinc-500">
+          {total.toLocaleString()} {t("logs.records")} · {t("logs.persistedNote")}
+        </span>
+        <button
+          onClick={() => setTick((x) => x + 1)}
+          className="ml-auto rounded-lg bg-zinc-800 px-4 py-1.5 text-sm font-medium hover:bg-zinc-700"
+        >
+          {t("logs.refresh")}
+        </button>
+      </div>
+      <div className="mb-4 flex flex-wrap gap-2">
+        <input
+          value={q}
+          onChange={(e) => filtered(setQ)(e.target.value)}
+          placeholder={t("logs.searchPlaceholder")}
+          className={`${inputCls} min-w-[200px] flex-1`}
+        />
+        <select value={provider} onChange={(e) => filtered(setProvider)(e.target.value)} className={inputCls}>
+          <option value="">{t("logs.allProviders")}</option>
+          {providerIds.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+        <select value={status} onChange={(e) => filtered(setStatus)(e.target.value)} className={inputCls}>
+          <option value="">{t("logs.allStatuses")}</option>
+          <option value="ok">ok</option>
+          <option value="error">error</option>
+        </select>
+        <select value={keyId} onChange={(e) => filtered(setKeyId)(e.target.value)} className={inputCls}>
+          <option value="">{t("logs.allKeys")}</option>
+          {keys.map((k) => (
+            <option key={k.id} value={k.id}>{k.name}</option>
+          ))}
+        </select>
+      </div>
+      {error && <p className="mb-4 text-red-400">{error}</p>}
+      <div className="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900">
+        {logs.length === 0 && <p className="p-4 text-sm text-zinc-500">{t("logs.empty")}</p>}
+        {logs.map((l) => (
+          <div key={l.id} className="px-4">
+            <button
+              onClick={() => setOpenId(openId === l.id ? null : l.id)}
+              className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 py-2.5 text-left"
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${l.status === "ok" ? "bg-emerald-400" : "bg-red-400"}`} />
+              <span className="text-xs text-zinc-500">{new Date(l.ts).toLocaleString([], { hour12: false })}</span>
+              <span className="font-mono text-xs font-medium text-zinc-100">{l.provider}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-400">{l.model}</span>
+              {l.cached && <span className="rounded-full bg-sky-900 px-2 py-0.5 text-[10px] text-sky-300">cache</span>}
+              <span className="text-xs text-zinc-500">{l.strategy}</span>
+              <span className="text-xs text-zinc-400">{l.promptTokens}→{l.completionTokens} tok</span>
+              <span className="text-xs text-zinc-400">${l.costUsd.toFixed(4)}</span>
+              <span className="w-16 text-right text-xs text-zinc-300">{l.latencyMs} ms</span>
+            </button>
+            {openId === l.id && (
+              <div className="pb-3 pl-5 text-xs text-zinc-400">
+                {l.request.map((m, i) => (
+                  <p key={i} className="mb-1">
+                    <span className="font-semibold text-zinc-300">{m.role}:</span> {m.content.slice(0, 400)}
+                  </p>
+                ))}
+                {l.responsePreview && (
+                  <p className="mt-2 rounded-lg bg-zinc-950 p-2 text-zinc-300">{l.responsePreview}</p>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 flex items-center justify-between text-sm">
+        <button disabled={page <= 0} onClick={() => setPage((p) => p - 1)} className="rounded-lg border border-zinc-700 px-4 py-1.5 disabled:opacity-40">
+          ← {t("logs.prev")}
+        </button>
+        <span className="text-zinc-500">{page + 1} / {pages}</span>
+        <button disabled={page + 1 >= pages} onClick={() => setPage((p) => p + 1)} className="rounded-lg border border-zinc-700 px-4 py-1.5 disabled:opacity-40">
+          {t("logs.next")} →
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function DiagnosticsExport() {
   const { t } = useLang();
@@ -185,7 +314,7 @@ function Timeline() {
 
 export default function Logs() {
   const { t } = useLang();
-  const [tab, setTab] = useState("activity");
+  const [tab, setTab] = useState("requests");
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">{t("nav.logs")}</h1>
@@ -193,12 +322,14 @@ export default function Logs() {
         active={tab}
         onChange={setTab}
         tabs={[
+          { id: "requests", label: "Requests" },
           { id: "activity", label: "Activity" },
           { id: "console", label: "Console" },
           { id: "proxy", label: "Proxy" },
           { id: "timeline", label: "Timeline" },
         ]}
       />
+      {tab === "requests" && <RequestLogs />}
       {tab === "activity" && <DiagnosticsExport />}
       {tab === "console" && (
         <TabEmpty>

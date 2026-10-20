@@ -150,6 +150,15 @@ export function createServer(
     providers.splice(0, providers.length, ...fresh);
   };
   refreshProviders();
+  // Persist every recorded request to the DB-backed request log
+  // (OmniRoute-style searchable history; the inspector stays the live view).
+  inspector.subscribe((entry) => {
+    try {
+      store.logRequest(entry);
+    } catch {
+      /* logging must never break traffic */
+    }
+  });
   registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry, dashboardSessions: sessions });
 
   if (hasDashboard) {

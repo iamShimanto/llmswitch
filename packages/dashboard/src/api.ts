@@ -162,6 +162,21 @@ export const api = {
     req<{ daily: Array<{ day: string; total: number }>; projectedMonthly: number }>("/api/costs/forecast"),
   quotas: () => req<{ providers: QuotaProvider[] }>("/api/quotas"),
   usageDaily: (days = 30) => req<{ days: DailyUsageRow[] }>(`/api/usage/daily?days=${days}`),
+  logs: (params: {
+    provider?: string;
+    model?: string;
+    status?: string;
+    key?: string;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+    return req<{ total: number; logs: RequestLogRow[] }>(`/api/logs?${qs.toString()}`);
+  },
   analyticsSummary: (days = 30, keyId?: string) =>
     req<AnalyticsSummary>(
       `/api/analytics/summary?days=${days}${keyId ? `&key=${encodeURIComponent(keyId)}` : ""}`,
@@ -208,6 +223,23 @@ export interface QuotaProvider {
   calls: number;
   errors: number;
   telemetry: { remaining: number | null; limit: number | null; resetAt: number | null } | null;
+}
+
+export interface RequestLogRow {
+  id: string;
+  ts: number;
+  keyId: string | null;
+  provider: string;
+  model: string;
+  strategy: string;
+  status: string;
+  latencyMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  cached: boolean;
+  request: Array<{ role: string; content: string }>;
+  responsePreview: string;
 }
 
 export interface AnalyticsSummary {

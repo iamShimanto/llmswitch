@@ -1201,6 +1201,21 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json(quotaCheck());
   });
   // daily aggregates for the Analytics page
+  app.get("/api/logs", (req: Request, res: Response) => {
+    const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+    res.json(
+      store.queryLogs({
+        provider: str(req.query.provider),
+        model: str(req.query.model),
+        status: str(req.query.status),
+        keyId: str(req.query.key),
+        q: str(req.query.q),
+        limit: parseInt(String(req.query.limit ?? "50"), 10) || 50,
+        offset: parseInt(String(req.query.offset ?? "0"), 10) || 0,
+      }),
+    );
+  });
+
   app.get("/api/analytics/summary", (req: Request, res: Response) => {
     const days = Math.min(3650, Math.max(1, parseInt(String(req.query.days ?? "30"), 10) || 30));
     const keyId = typeof req.query.key === "string" && req.query.key ? req.query.key : undefined;
