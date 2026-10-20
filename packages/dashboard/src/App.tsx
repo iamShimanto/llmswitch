@@ -307,19 +307,6 @@ function AppInner() {
               {t("nav.logout")}
             </button>
           )}
-          <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-zinc-500">
-            🔑 {t("header.adminKeyTitle")}
-          </label>
-          <input
-            type="password"
-            value={adminKey}
-            placeholder={t("header.adminKeyPlaceholder")}
-            onChange={(e) => {
-              setAdminKeyState(e.target.value);
-              setAdminKey(e.target.value);
-            }}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-xs"
-          />
         </div>
       </aside>
       <main key={adminKey} className="mx-auto w-full min-w-0 max-w-6xl px-4 py-8">

@@ -37,7 +37,7 @@ describe("dashboard password auth", () => {
   });
 
   it("sessions issue, validate and revoke", () => {
-    const sessions = new DashboardSessions();
+    const sessions = new DashboardSessions(freshStore());
     const token = sessions.issue();
     expect(sessions.valid(token)).toBe(true);
     expect(sessions.valid("bogus")).toBe(false);

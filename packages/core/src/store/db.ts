@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS dashboard_sessions (
+  token_hash TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS combos (
   name TEXT PRIMARY KEY,
   definition TEXT NOT NULL,
@@ -210,6 +214,28 @@ export class Store {
       value: string;
     } | undefined;
     return row?.value ?? null;
+  }
+
+  /** Dashboard login sessions (hashed tokens) — persisted so logins survive restarts/deploys. */
+  createDashboardSession(tokenHash: string, expiresAt: number): void {
+    this.db
+      .prepare("INSERT OR REPLACE INTO dashboard_sessions (token_hash, expires_at) VALUES (?, ?)")
+      .run(tokenHash, expiresAt);
+  }
+
+  dashboardSessionExpiry(tokenHash: string): number | null {
+    const row = this.db
+      .prepare("SELECT expires_at FROM dashboard_sessions WHERE token_hash = ?")
+      .get(tokenHash) as { expires_at: number } | undefined;
+    return row ? row.expires_at : null;
+  }
+
+  deleteDashboardSession(tokenHash: string): void {
+    this.db.prepare("DELETE FROM dashboard_sessions WHERE token_hash = ?").run(tokenHash);
+  }
+
+  clearDashboardSessions(): void {
+    this.db.prepare("DELETE FROM dashboard_sessions").run();
   }
 
   /** All settings whose key starts with `prefix`, as a record. */
