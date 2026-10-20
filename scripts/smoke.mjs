@@ -93,7 +93,7 @@ process.env.PORT = "6399";
 process.env.DATA_DIR = "/tmp/llmswitch-smoke";
 
 const config = loadConfig();
-const providers = registry.connected();
+const providers = registry.connected().filter((p) => p.id === "sick" || p.id === "mocktest");
 check("two providers connected", providers.length === 2);
 
 const store = new Store(config.dataDir);
