@@ -18,6 +18,7 @@ import {
   hasGitlabDuoCreds,
   hasAgyCreds,
   hasDevinDesktopCreds,
+  hasProviderSession,
 } from "../oauth/sessions.js";
 import { hasBedrockCreds } from "../executor/bedrock.js";
 import { hasVertexCreds } from "../executor/vertex.js";
@@ -116,6 +117,18 @@ export class ProviderRegistry {
         continue;
       }
       const keys = collectKeys(def.envKey, env);
+      // muse-code may be connected by device login alone (session file,
+      // no API key): the executor resolves/remints credentials at call time.
+      if (keys.length === 0 && def.id === "muse-code" && hasProviderSession("muse-code", env)) {
+        const { envKey: _ek2, envBaseUrl: _eb2, ...rest2 } = def;
+        out.push({
+          ...rest2,
+          apiKey: "",
+          allKeys: ["session"],
+          baseUrl: def.baseUrl,
+        });
+        continue;
+      }
       if (keys.length === 0 && !def.noAuth) continue;
       const { envKey: _ek, envBaseUrl: _eb, ...rest } = def;
       out.push({

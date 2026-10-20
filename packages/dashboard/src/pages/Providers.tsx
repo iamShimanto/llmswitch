@@ -215,6 +215,10 @@ function ProviderDetail({
         </div>
       )}
 
+      {p.id === "muse-code" && (
+        <DeviceConnectCard onChanged={onChanged} />
+      )}
+
       {!connected && (
         <div className={`${card} mb-4 border-dashed`}>
           <h2 className="mb-1 font-semibold">Not connected</h2>
@@ -429,6 +433,134 @@ const OAUTH_PANEL: OAuthPanelCfg[] = [
 ];
 
 /** One OAuth provider's browser connect/disconnect card. */
+function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
+  const [status, setStatus] = useState<{ email?: string; tier?: string; subsActive?: boolean; requirePayment?: boolean } | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "waiting" | "failed">("idle");
+  const [userCode, setUserCode] = useState("");
+  const [verifyUrl, setVerifyUrl] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const loadStatus = () => {
+    api
+      .museStatus()
+      .then((r) => {
+        if (r.connected) setStatus({ email: r.email, tier: r.tier, subsActive: r.subsActive, requirePayment: r.requirePayment });
+        else setStatus(null);
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  };
+  useEffect(loadStatus, []);
+
+  const start = async () => {
+    setMsg("");
+    try {
+      const r = await api.museDeviceStart();
+      // Open the verification page synchronously from the click (mobile
+      // browsers block popups opened after async gaps).
+      window.open(r.verificationUrl, "_blank");
+      setUserCode(r.userCode);
+      setVerifyUrl(r.verificationUrl);
+      setPhase("waiting");
+      const state = r.state;
+      const intervalMs = Math.max(3, r.interval || 5) * 1000;
+      const deadline = Date.now() + r.expiresIn * 1000;
+      const timer = setInterval(async () => {
+        if (Date.now() > deadline) {
+          clearInterval(timer);
+          setPhase("failed");
+          setMsg("The code expired — try again.");
+          return;
+        }
+        try {
+          const p = await api.museDevicePoll(state);
+          if (p.status === "connected") {
+            clearInterval(timer);
+            setPhase("idle");
+            setStatus({ email: p.email, tier: p.tier, subsActive: p.subsActive, requirePayment: p.requirePayment });
+            onChanged();
+          } else if (p.status === "failed" || p.status === "expired") {
+            clearInterval(timer);
+            setPhase("failed");
+            setMsg(p.error ?? "Login failed — try again.");
+          }
+        } catch {
+          /* keep polling through transient errors */
+        }
+      }, intervalMs);
+    } catch (e) {
+      setPhase("failed");
+      setMsg(String(e));
+    }
+  };
+
+  const disconnect = async () => {
+    try {
+      await api.museDisconnect();
+      setStatus(null);
+      onChanged();
+    } catch {
+      /* ignore */
+    }
+  };
+
+  if (!loaded) return null;
+  return (
+    <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+      <h2 className="mb-1 font-semibold">Connect your Muse account</h2>
+      {status ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-zinc-400">
+            Connected{status.email ? <> as <b className="text-zinc-200">{status.email}</b></> : ""}
+            {status.tier ? <> · {status.tier}</> : ""}
+            {status.subsActive === false ? (
+              <span className="text-amber-400"> · subscription not active — requests may need payment setup</span>
+            ) : null}
+          </p>
+          <button
+            onClick={disconnect}
+            className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800"
+          >
+            Disconnect
+          </button>
+        </div>
+      ) : phase === "waiting" ? (
+        <div>
+          <p className="mb-2 text-sm text-zinc-400">
+            On Meta's page, confirm this code matches, then approve:
+          </p>
+          <p className="mb-2 font-mono text-2xl font-bold tracking-widest">{userCode}</p>
+          <a
+            href={verifyUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm text-sky-400 underline"
+          >
+            Open Meta verification page
+          </a>
+          <p className="mt-2 animate-pulse text-sm text-zinc-500">Waiting for approval…</p>
+        </div>
+      ) : (
+        <div>
+          <p className="mb-3 text-sm text-zinc-400">
+            Log in with the Muse / Muse Code account whose token balance you
+            want to spend here — no API key needed. A code will be shown; you
+            approve it on Meta's site.
+          </p>
+          <button
+            onClick={start}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
+          >
+            Connect with device code
+          </button>
+          {msg && <p className="mt-2 text-sm text-red-400">{msg}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
   const { t } = useLang();
   const [status, setStatus] = useState<OAuthStatus | null>(null);

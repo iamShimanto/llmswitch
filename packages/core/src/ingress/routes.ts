@@ -12,7 +12,15 @@ import type { Inspector } from "../inspect/index.js";
 import { replayEntry } from "../inspect/index.js";
 import { truncateMessages } from "../inspect/index.js";
 import { redactEnabled, redactPii } from "../privacy/redact.js";
+import { randomUUID } from "node:crypto";
 import { fanout } from "../playground/index.js";
+import {
+  mintMuseApiKey,
+  pollMuseDeviceToken,
+  readMuseCodeSession,
+  requestMuseDeviceCode,
+  saveMuseCodeSession,
+} from "../oauth/museCodeDevice.js";
 import { SkillRegistry } from "../skills/index.js";
 import { runCombo, validateCombo, type Combo } from "../combos/index.js";
 import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
@@ -1644,6 +1652,96 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     store.audit("oauth.token_saved", def.id, "token paste");
     deps.refreshProviders?.();
     res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
+  // ---- Muse Code device login (RFC 8628 + key minting) ----
+  const museDevicePending = new Map<string, { deviceCode: string; expiresAt: number }>();
+
+  app.post("/api/oauth/muse-code/device/start", async (_req: Request, res: Response) => {
+    try {
+      const dc = await requestMuseDeviceCode(fetch);
+      const state = randomUUID();
+      museDevicePending.set(state, {
+        deviceCode: dc.deviceCode,
+        expiresAt: Date.now() + dc.expiresIn * 1000,
+      });
+      res.json({
+        state,
+        userCode: dc.userCode,
+        verificationUrl: dc.verificationUriComplete || dc.verificationUri,
+        expiresIn: dc.expiresIn,
+        interval: dc.interval,
+      });
+    } catch (err) {
+      res.status(502).json({
+        error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+      });
+    }
+  });
+
+  app.post("/api/oauth/muse-code/device/poll", async (req: Request, res: Response) => {
+    const state = typeof req.body?.state === "string" ? req.body.state : "";
+    const pending = museDevicePending.get(state);
+    if (!pending) {
+      res.status(404).json({ error: { message: "unknown or expired login attempt — start again", type: "not_found" } });
+      return;
+    }
+    if (Date.now() > pending.expiresAt) {
+      museDevicePending.delete(state);
+      res.json({ status: "expired" });
+      return;
+    }
+    const r = await pollMuseDeviceToken(fetch, pending.deviceCode);
+    if (r.status === "pending") {
+      res.json({ status: "pending" });
+      return;
+    }
+    museDevicePending.delete(state);
+    if (r.status !== "ok") {
+      res.json({ status: "failed", error: r.error });
+      return;
+    }
+    // Best-effort mint: a dca-only session still connects (the executor
+    // mints on first use), but minting now surfaces the account + tier.
+    let minted;
+    try {
+      minted = await mintMuseApiKey(fetch, r.dcaToken);
+    } catch {
+      minted = undefined;
+    }
+    const session = saveMuseCodeSession(process.env, { dcaToken: r.dcaToken, minted });
+    store.audit("oauth.muse_code_connected", "muse-code", session.email ?? "device login");
+    deps.refreshProviders?.();
+    res.json({
+      status: "connected",
+      email: session.email,
+      tier: session.meta.subsTierName,
+      subsActive: session.meta.isSubsActive,
+      requirePayment: session.meta.requirePayment,
+    });
+  });
+
+  app.get("/api/oauth/muse-code/status", (_req: Request, res: Response) => {
+    const s = readMuseCodeSession(process.env);
+    if (!s) {
+      res.json({ connected: false });
+      return;
+    }
+    res.json({
+      connected: providers.some((p) => p.id === "muse-code"),
+      email: s.email,
+      tier: s.meta.subsTierName,
+      subsActive: s.meta.isSubsActive,
+      requirePayment: s.meta.requirePayment,
+    });
+  });
+
+  app.delete("/api/oauth/muse-code", (_req: Request, res: Response) => {
+    const file = join(sessionsDir(), "muse-code.json");
+    if (existsSync(file)) unlinkSync(file);
+    store.audit("oauth.muse_code_disconnected", "muse-code", "device disconnect");
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === "muse-code") });
   });
 
   app.delete("/api/oauth/:id/token", (req: Request, res: Response) => {

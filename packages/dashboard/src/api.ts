@@ -187,6 +187,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ provider, cookies, cookieDomain, ...(accessToken ? { accessToken } : {}) }),
     }),
+  museDeviceStart: () =>
+    req<{ state: string; userCode: string; verificationUrl: string; expiresIn: number; interval: number }>(
+      "/api/oauth/muse-code/device/start",
+      { method: "POST", body: "{}" },
+    ),
+  museDevicePoll: (state: string) =>
+    req<{ status: string; email?: string; tier?: string; subsActive?: boolean; requirePayment?: boolean; error?: string }>(
+      "/api/oauth/muse-code/device/poll",
+      { method: "POST", body: JSON.stringify({ state }) },
+    ),
+  museStatus: () =>
+    req<{ connected: boolean; email?: string; tier?: string; subsActive?: boolean; requirePayment?: boolean }>(
+      "/api/oauth/muse-code/status",
+    ),
+  museDisconnect: () =>
+    req<{ ok: boolean; connected: boolean }>("/api/oauth/muse-code", { method: "DELETE" }),
   deleteSession: (name: string) =>
     req<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" }),
   batches: () => req<{ object: string; data: BatchJob[]; supported?: boolean }>("/api/batches"),
