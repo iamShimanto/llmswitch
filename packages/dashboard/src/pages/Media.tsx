@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
 import { Tabs } from "../components/Tabs";
 
@@ -36,7 +36,28 @@ async function postV1(path: string, gwKey: string, body: unknown): Promise<{ ok:
   }
 }
 
+async function listModels(gwKey: string): Promise<string[]> {
+  try {
+    const res = await fetch("/v1/models", { headers: { authorization: `Bearer ${gwKey}` } });
+    if (!res.ok) return [];
+    const j = (await res.json()) as { data?: Array<{ id?: string }> };
+    return (j.data ?? []).map((m) => m.id ?? "").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 type Kind = "image" | "audio" | "video";
+
+// Capability filters mirror the Models page chips (matched against the model
+// part of a "provider:model" id).
+const KIND_MODEL_RE: Record<Kind, RegExp> = {
+  image: /dall-e|flux|imagen|stable|sdxl|image|midjourney|ideogram|recraft|gpt-image/i,
+  audio: /tts|text-to-speech|kokoro|chatterbox/i,
+  video: /veo|sora|video|kling|runway|luma/i,
+};
+
+const MODEL_KEY = "llmswitch_media_model";
 
 const KIND_HINT: Record<Kind, string> = {
   image: "Text prompt → generated image (PNG).",
@@ -51,6 +72,49 @@ export default function Media() {
   const [prompt, setPrompt] = useState("a red panda reading a newspaper, watercolor");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string; img?: string } | null>(null);
+  const [allModels, setAllModels] = useState<string[]>([]);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [sel, setSel] = useState<Record<Kind, string>>(() => {
+    const base: Record<Kind, string> = { image: "", audio: "", video: "" };
+    try {
+      const raw = localStorage.getItem(MODEL_KEY);
+      if (raw) return { ...base, ...(JSON.parse(raw) as Partial<Record<Kind, string>>) };
+    } catch { /* ignore */ }
+    return base;
+  });
+
+  useEffect(() => {
+    if (!key) {
+      setAllModels([]);
+      setModelsLoaded(false);
+      return;
+    }
+    let live = true;
+    void listModels(key).then((ids) => {
+      if (!live) return;
+      setAllModels(ids);
+      setModelsLoaded(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+
+  const pick = (kind: Kind, v: string) => {
+    setSel((s) => {
+      const next = { ...s, [kind]: v };
+      try {
+        localStorage.setItem(MODEL_KEY, JSON.stringify(next));
+      } catch { /* ignore */ }
+      return next;
+    });
+  };
+
+  const tabModels = allModels.filter((id) => {
+    const modelPart = id.includes(":") ? id.slice(id.indexOf(":") + 1) : id;
+    return KIND_MODEL_RE[tab].test(modelPart);
+  });
+  const model = sel[tab] && tabModels.includes(sel[tab]) ? sel[tab] : "";
 
   const run = async () => {
     if (!key) {
@@ -59,8 +123,9 @@ export default function Media() {
     }
     setBusy(true);
     setResult(null);
+    const modelField = model ? { model } : {};
     if (tab === "image") {
-      const r = await postV1("/v1/images/generations", key, { prompt, n: 1, size: "1024x1024" });
+      const r = await postV1("/v1/images/generations", key, { prompt, n: 1, size: "1024x1024", ...modelField });
       let img: string | undefined;
       try {
         const j = JSON.parse(r.text);
@@ -68,10 +133,10 @@ export default function Media() {
       } catch { /* keep raw text */ }
       setResult({ ok: r.ok, text: r.text, img });
     } else if (tab === "audio") {
-      const r = await postV1("/v1/audio/speech", key, { input: prompt.slice(0, 200), voice: "alloy" });
+      const r = await postV1("/v1/audio/speech", key, { input: prompt.slice(0, 200), voice: "alloy", ...modelField });
       setResult({ ok: r.ok, text: r.ok ? t("media.audioReceived", { n: r.text.length }) : r.text });
     } else {
-      const r = await postV1("/v1/videos/generations", key, { prompt });
+      const r = await postV1("/v1/videos/generations", key, { prompt, ...modelField });
       setResult({ ok: r.ok, text: r.text });
     }
     setBusy(false);
@@ -111,6 +176,31 @@ export default function Media() {
         </label>
       </div>
       <div className={`${card} mb-6`}>
+        <label className="mb-4 block text-sm">
+          <span className="mb-1 block text-zinc-400">
+            Model{" "}
+            <span className="text-zinc-500">
+              {!key
+                ? "— paste a gateway key above to load models"
+                : modelsLoaded
+                  ? `— ${tabModels.length} ${tab} model${tabModels.length === 1 ? "" : "s"} available`
+                  : "— loading…"}
+            </span>
+          </span>
+          <select
+            value={model}
+            onChange={(e) => pick(tab, e.target.value)}
+            disabled={!key}
+            className="w-full max-w-md rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">Auto (gateway default)</option>
+            {tabModels.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="block text-sm">
           <span className="mb-1 block text-zinc-400">{tab === "audio" ? "Input text" : "Prompt"}</span>
           <input
