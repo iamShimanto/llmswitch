@@ -1,8 +1,41 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type OAuthStatus, type ProviderInfo } from "../api";
+import { api, type CatalogEntry, type OAuthStatus, type ProviderInfo } from "../api";
 
-function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) {
+function ProviderDetail({
+  p,
+  connected,
+  envKey,
+  onBack,
+  onChanged,
+}: {
+  p: ProviderInfo;
+  connected: boolean;
+  envKey?: string;
+  onBack: () => void;
+  onChanged: () => void;
+}) {
+  const [keyInput, setKeyInput] = useState("");
+  const [savingKey, setSavingKey] = useState(false);
+  const [keyMsg, setKeyMsg] = useState("");
+
+  const saveKey = async () => {
+    setSavingKey(true);
+    setKeyMsg("");
+    try {
+      const r = await api.saveProviderKey(p.id, keyInput);
+      if (r.connected) {
+        setKeyInput("");
+        onChanged();
+      } else {
+        setKeyMsg("Key saved, but the provider did not connect — check the key.");
+      }
+    } catch (e) {
+      setKeyMsg(String(e));
+    } finally {
+      setSavingKey(false);
+    }
+  };
   const { t } = useLang();
   const [models, setModels] = useState<string[]>(p.models);
   const [discovering, setDiscovering] = useState(false);
@@ -89,20 +122,63 @@ function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) 
         <div className="flex gap-2">
           <button
             onClick={discover}
-            disabled={discovering}
+            disabled={discovering || !connected}
             className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800 disabled:opacity-50"
           >
             {discovering ? "Discovering…" : "Discover models"}
           </button>
           <button
             onClick={test}
-            disabled={testing}
+            disabled={testing || !connected}
             className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
           >
             {testing ? "Testing…" : "Test provider"}
           </button>
         </div>
       </div>
+
+      {!connected && (
+        <div className={`${card} mb-4 border-dashed`}>
+          <h2 className="mb-1 font-semibold">Not connected</h2>
+          {p.authType === "api-key" ? (
+            <>
+              <p className="mb-3 text-sm text-zinc-400">
+                Paste your {p.name} API key to connect it — it is stored only in this
+                gateway's local database and works immediately (no restart).
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  type="password"
+                  value={keyInput}
+                  onChange={(e) => setKeyInput(e.target.value)}
+                  placeholder={envKey ? `${envKey} value` : "API key"}
+                  className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={saveKey}
+                  disabled={savingKey || !keyInput.trim()}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+                >
+                  {savingKey ? "Connecting…" : "Save & connect"}
+                </button>
+              </div>
+              {keyMsg && <p className="mt-2 text-sm text-red-400">{keyMsg}</p>}
+            </>
+          ) : p.authType === "oauth" ? (
+            <p className="text-sm text-zinc-400">
+              This provider connects with OAuth — use the Connect panel at the top of the
+              Providers page, then come back here to test its models.
+            </p>
+          ) : p.authType === "cookie" ? (
+            <p className="text-sm text-zinc-400">
+              This provider needs an imported browser session — import it from the
+              Sessions page, then come back here to test its models.
+            </p>
+          ) : (
+            <p className="text-sm text-zinc-400">This provider is not available yet.</p>
+          )}
+        </div>
+      )}
 
       {testResult && (
         <div className={`${card} mb-4`}>
@@ -129,7 +205,7 @@ function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) 
         {models.length > 0 && (
           <button
             onClick={testAll}
-            disabled={testingAll}
+            disabled={testingAll || !connected}
             className="rounded-lg border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800 disabled:opacity-50"
           >
             {testingAll ? "Testing…" : "Test all models"}
@@ -160,7 +236,7 @@ function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) 
                   )}
                   <button
                     onClick={() => testModel(m)}
-                    disabled={r?.state === "running"}
+                    disabled={r?.state === "running" || !connected}
                     className="shrink-0 rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
                   >
                     {r?.state === "running" ? "Testing…" : "Test"}
@@ -291,54 +367,110 @@ function OAuthConnectPanel() {
 export default function Providers() {
   const { t } = useLang();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [selected, setSelected] = useState<ProviderInfo | null>(null);
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     api.providers().then(setProviders).catch((e) => setError(String(e)));
-  }, []);
+    api.catalog().then(setCatalog).catch(() => undefined);
+  };
+  useEffect(load, []);
 
-  if (selected) {
-    return <ProviderDetail p={selected} onBack={() => setSelected(null)} />;
+  const connectedById = new Map(providers.map((p) => [p.id, p]));
+  const selectedEntry = selectedId ? catalog.find((c) => c.id === selectedId) : undefined;
+  const selectedConnected = selectedId ? connectedById.get(selectedId) : undefined;
+
+  if (selectedId && (selectedEntry || selectedConnected)) {
+    const info: ProviderInfo =
+      selectedConnected ??
+      ({
+        id: selectedEntry!.id,
+        name: selectedEntry!.name,
+        wireFormat: selectedEntry!.wireFormat,
+        authType: selectedEntry!.authType,
+        models: selectedEntry!.models,
+        defaultModel: selectedEntry!.defaultModel,
+        stats: { calls: 0, errors: 0, totalLatencyMs: 0 },
+      } as ProviderInfo);
+    return (
+      <ProviderDetail
+        key={info.id}
+        p={info}
+        connected={Boolean(selectedConnected)}
+        envKey={selectedEntry?.envKey}
+        onBack={() => setSelectedId(null)}
+        onChanged={load}
+      />
+    );
   }
+
+  const q = query.trim().toLowerCase();
+  const entries = [...catalog]
+    .sort((a, b) => Number(b.connected) - Number(a.connected) || a.name.localeCompare(b.name))
+    .filter(
+      (c) =>
+        !q ||
+        c.name.toLowerCase().includes(q) ||
+        c.id.toLowerCase().includes(q) ||
+        c.models.some((m) => m.toLowerCase().includes(q)),
+    );
 
   return (
     <div>
       <h1 className="mb-6 text-2xl font-bold">{t("nav.providers")}</h1>
       {error && <p className="mb-4 text-red-400">{error}</p>}
       <OAuthConnectPanel />
-      {providers.length === 0 && !error && (
-        <p className="text-zinc-400">
-          No providers connected. Set an API key env var (e.g. <code>GROQ_API_KEY</code>) and
-          restart the gateway.
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search providers or models…"
+          className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+        />
+        <p className="text-sm text-zinc-500">
+          {providers.length} connected · {catalog.length} total
         </p>
-      )}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {providers.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => setSelected(p)}
-            className="min-w-0 w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600"
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="min-w-0 truncate font-semibold">{p.name}</h2>
-              {p.authType === "none" ? (
-                <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
-              ) : (
-                <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">{t("common.connected")}</span>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-zinc-500">
-              {p.id} · {p.wireFormat} · default: {p.defaultModel}
-            </p>
-            <p className="mt-2 truncate text-sm text-zinc-400">{p.models.join(", ")}</p>
-            <p className="mt-2 text-xs text-zinc-500">
-              {p.stats.calls} calls · {p.stats.errors} errors ·{" "}
-              <span className="text-sky-400">{t("providers.detailsArrow")}</span>
-            </p>
-          </button>
-        ))}
       </div>
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {entries.map((c) => {
+          const live = connectedById.get(c.id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => setSelectedId(c.id)}
+              className="min-w-0 w-full overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="min-w-0 truncate font-semibold">{c.name}</h2>
+                {c.disabled ? (
+                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Unavailable</span>
+                ) : live ? (
+                  c.authType === "none" ? (
+                    <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
+                  ) : (
+                    <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">{t("common.connected")}</span>
+                  )
+                ) : (
+                  <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Not connected</span>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                {c.id} · {c.authType} · {c.models.length} models · default: {c.defaultModel}
+              </p>
+              <p className="mt-2 truncate text-sm text-zinc-400">{c.models.slice(0, 4).join(", ")}</p>
+              <p className="mt-2 text-xs text-zinc-500">
+                {live ? `${live.stats.calls} calls · ${live.stats.errors} errors · ` : ""}
+                <span className="text-sky-400">{t("providers.detailsArrow")}</span>
+              </p>
+            </button>
+          );
+        })}
+      </div>
+      {entries.length === 0 && (
+        <p className="text-zinc-400">No providers match your search.</p>
+      )}
     </div>
   );
 }

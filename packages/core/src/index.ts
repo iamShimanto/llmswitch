@@ -45,9 +45,12 @@ export async function start(): Promise<void> {
     /* local detection never blocks boot */
   }
 
-  const providers = registry.connected();
-
   const store = new Store(config.dataDir);
+  const bootEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const [k, v] of Object.entries(store.listSettings("provider_key:"))) {
+    bootEnv[k.slice("provider_key:".length)] = v;
+  }
+  const providers = registry.connected(bootEnv);
   ensureFirstRunKey(store);
 
   const { app, router, store: serverStore } = createServer(config, providers, store, registry);

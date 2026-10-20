@@ -212,6 +212,18 @@ export class Store {
     return row?.value ?? null;
   }
 
+  /** All settings whose key starts with `prefix`, as a record. */
+  listSettings(prefix: string): Record<string, string> {
+    const rows = this.db
+      .prepare("SELECT key, value FROM settings WHERE key LIKE ?")
+      .all(`${prefix}%`) as Array<{ key: string; value: string }>;
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  }
+
+  deleteSetting(key: string): void {
+    this.db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+  }
+
   setSetting(key: string, value: string): void {
     this.db
       .prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
