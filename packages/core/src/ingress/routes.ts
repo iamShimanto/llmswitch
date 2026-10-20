@@ -2119,7 +2119,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           messages: [{ role: "user", content: "Reply with the single word: ok" }],
           max_tokens: 16,
         },
-        { strategy: "priority", bypassCache: true, timeoutMs: 45_000 },
+        {
+          strategy: "priority",
+          bypassCache: true,
+          // Cookie/web-chat providers run multi-step flows (challenge
+          // solvers, and the ChatGPT browser bridge drives a real page) —
+          // 45s is unrealistically tight for them; API providers stay fast-fail.
+          timeoutMs: p.authType === "cookie" ? 150_000 : 45_000,
+        },
       );
       const latencyMs = Date.now() - started;
       if (result.providerId !== p.id) {
