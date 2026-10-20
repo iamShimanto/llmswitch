@@ -28,7 +28,7 @@ import type { ExecuteResult } from "./http.js";
 export const WEBCHAT_PROVIDER_IDS: ReadonlySet<string> = new Set(WEBCHAT_DRIVER_IDS);
 
 export function webchatSessionPath(id: string, env: NodeJS.ProcessEnv = process.env): string {
-  const dir = env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   return join(dir, `${id}.json`);
 }
 

@@ -32,7 +32,7 @@ export const TRAE_API_BASE_URL = "https://core-normal.trae.ai/api/remote/v1";
 export const TRAE_DEFAULT_WEB_ORIGIN = "https://work.trae.ai";
 
 function sessionPath(env: NodeJS.ProcessEnv): string {
-  const dir = env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   return join(dir, "trae.json");
 }
 

@@ -25,7 +25,7 @@ export const CURSOR_POLL_URL = "https://api2.cursor.sh/auth/poll";
 export const CURSOR_REFRESH_URL = "https://api2.cursor.sh/auth/exchange_user_api_key";
 
 function sessionPath(env: NodeJS.ProcessEnv): string {
-  const dir = env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   return join(dir, "cursor.json");
 }
 
