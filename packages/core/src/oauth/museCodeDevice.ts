@@ -144,7 +144,20 @@ export async function mintMuseApiKey(
     signal: AbortSignal.timeout(20_000),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Muse Code key mint failed (HTTP ${res.status})`);
+  if (!res.ok) {
+    // Meta's error body explains itself (e.g. 403 "Payment required — A
+    // payment method or subscription is required" + an action URL).
+    // Surface it verbatim so the dashboard tells the user what to do.
+    let detail = "";
+    try {
+      const j = JSON.parse(text) as { title?: string; detail?: string; action_url?: string };
+      detail = [j.title, j.detail].filter(Boolean).join(": ");
+      if (j.action_url) detail += ` (${j.action_url})`;
+    } catch {
+      detail = text.slice(0, 160);
+    }
+    throw new Error(`Muse Code key mint failed (HTTP ${res.status})${detail ? ` — ${detail}` : ""}`);
+  }
   let data: Record<string, unknown>;
   try {
     data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
