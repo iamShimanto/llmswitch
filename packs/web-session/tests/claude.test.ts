@@ -26,7 +26,7 @@ describe("claude public OAuth creds (from OmniRoute)", () => {
     expect(CLAUDE_PUBLIC_CLIENT_ID).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
   });
   it("uses OmniRoute's Anthropic OAuth endpoints", () => {
-    expect(CLAUDE_AUTH_URL).toBe("https://api.anthropic.com/v1/oauth/authorize");
+    expect(CLAUDE_AUTH_URL).toBe("https://claude.ai/oauth/authorize");
     expect(CLAUDE_TOKEN_URL).toBe("https://api.anthropic.com/v1/oauth/token");
   });
   it("defaults to the Claude Code scope set (needs live verification)", () => {
@@ -51,7 +51,7 @@ describe("claude buildAuthUrl (PKCE)", () => {
   it("includes PKCE params, client_id and scopes", () => {
     const url = buildAuthUrl("http://127.0.0.1:53111/callback", "challenge123", "state123");
     const p = new URLSearchParams(url.split("?")[1]);
-    expect(url.startsWith("https://api.anthropic.com/v1/oauth/authorize?")).toBe(true);
+    expect(url.startsWith("https://claude.ai/oauth/authorize?")).toBe(true);
     expect(p.get("client_id")).toBe(CLAUDE_PUBLIC_CLIENT_ID);
     expect(p.get("response_type")).toBe("code");
     expect(p.get("code_challenge")).toBe("challenge123");

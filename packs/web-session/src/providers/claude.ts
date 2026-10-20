@@ -40,9 +40,12 @@ export function claudeClientId(env: NodeJS.ProcessEnv = process.env): string {
   return env.CLAUDE_OAUTH_CLIENT_ID?.trim() || CLAUDE_PUBLIC_CLIENT_ID;
 }
 
-/** OmniRoute OAUTH_ENDPOINTS.anthropic (env-overridable). */
+/** Consent page host (env-overridable). NOTE: the authorize page lives on
+ * claude.ai — api.anthropic.com/v1/oauth/authorize returns Anthropic's
+ * 404 not_found_error (verified live 2026-10-20 from a user report). Only
+ * the token endpoint lives on api.anthropic.com. */
 export const CLAUDE_AUTH_URL =
-  process.env.CLAUDE_OAUTH_AUTH_URL?.trim() || "https://api.anthropic.com/v1/oauth/authorize";
+  process.env.CLAUDE_OAUTH_AUTH_URL?.trim() || "https://claude.ai/oauth/authorize";
 /** OmniRoute registry claude oauth.tokenUrl (env-overridable). */
 export const CLAUDE_TOKEN_URL =
   process.env.CLAUDE_OAUTH_TOKEN_URL?.trim() || "https://api.anthropic.com/v1/oauth/token";
