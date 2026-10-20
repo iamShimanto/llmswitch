@@ -439,3 +439,25 @@ DEFAULT account's quota group intermittently disappears from
 /api/quotas (its chat path is healthy; the DB account's 22 buckets
 load fine) — the quota fetcher skips accounts whose retrieveUserQuota
 call fails; to be diagnosed separately.
+
+## Browser bridge — ChatGPT Web works (2026-10-20, late evening)
+The Turnstile wall from the hardening batch is now actually solved,
+the way OmniRoute solves it: with a real browser.
+- **services/browser-bridge/**: a small internal-only service
+  (headless Chrome-for-Testing + puppeteer-core) that runs each
+  ChatGPT turn INSIDE chatgpt.com — the page's own Sentinel flow
+  (prepare → finalize → req) completes invisibly, Turnstile included.
+  Turns are serialized (small host), each in a fresh browser context
+  (cookies never leak between accounts), Chrome pre-warmed at boot.
+- **Driver**: ChatGptWebDriver (both chatgpt-web and
+  chatgpt-web-free) routes turns through the bridge when
+  CHATGPT_BRIDGE_URL is set; docker-compose wires it to the internal
+  service (no host port published). Without it, the previous
+  PoW-only behavior + clear Turnstile error remain.
+- Extraction handles both layouts: role-marked nodes (logged-in
+  desktop) and the anonymous mobile-web plain-text transcript
+  ("You said: / ChatGPT said:") — the role nodes do not exist there.
+- LIVE PROOF (2026-10-20): provider test ok in ~9s ("ok"); a real
+  /v1/chat/completions call answered "Dhaka" via chatgpt-web-free.
+  Expect ~10–30s per ChatGPT web reply (a real page turn), one at a
+  time. Pack suite 231/231.
