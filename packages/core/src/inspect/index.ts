@@ -69,6 +69,18 @@ export class Inspector {
     return entry;
   }
 
+  /**
+   * Preload historical entries (from the DB usage log) at boot so the
+   * Live/Activity feed survives restarts. Entries are appended behind any
+   * live ones and listeners are NOT notified (they are history, not events).
+   */
+  seed(entries: InspectEntry[]): void {
+    for (const e of entries) {
+      if (this.entries.length >= this.cap) break;
+      this.entries.push(e);
+    }
+  }
+
   list(limit = 50): InspectEntry[] {
     return this.entries.slice(0, limit);
   }

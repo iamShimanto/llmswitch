@@ -170,6 +170,37 @@ export class Store {
     return res.changes > 0;
   }
 
+  /** Most recent usage rows (newest first) — seeds the Live/Activity feed. */
+  recentUsage(limit = 50): Array<{
+    ts: number;
+    keyId: string | null;
+    provider: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    latencyMs: number;
+    status: string;
+    costUsd: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT ts, key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status, cost_usd
+         FROM usage_log ORDER BY ts DESC LIMIT ?`,
+      )
+      .all(limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      ts: Number(r.ts),
+      keyId: (r.key_id as string | null) ?? null,
+      provider: String(r.provider),
+      model: String(r.model),
+      promptTokens: Number(r.prompt_tokens),
+      completionTokens: Number(r.completion_tokens),
+      latencyMs: Number(r.latency_ms),
+      status: String(r.status),
+      costUsd: Number(r.cost_usd),
+    }));
+  }
+
   logUsage(entry: {
     keyId: string | null;
     provider: string;

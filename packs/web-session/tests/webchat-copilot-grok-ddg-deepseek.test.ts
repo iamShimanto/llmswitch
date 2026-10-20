@@ -314,13 +314,13 @@ describe("DuckDuckGoDriver", () => {
     );
   });
 
-  it("requires a solver for x-vqd-hash-1 challenges (default: NEEDS LIVE VERIFICATION)", async () => {
+  it("default solver rejects a garbage challenge payload", async () => {
     const fetchFn = vi.fn(async () => textRes("", 200, { "x-vqd-hash-1": "aGFzaA==" })) as unknown as typeof fetch;
     const d = new DuckDuckGoDriver(ddgJar(), fetchFn);
-    await expect(d.bootstrap()).rejects.toThrow(/NEEDS LIVE VERIFICATION/);
+    await expect(d.bootstrap()).rejects.toThrow(/challenge solve failed/);
   });
 
-  it("uses an injected challenge solver's result as the vqd token", async () => {
+  it("sends the solver's result in the x-vqd-hash-1 header (never as x-vqd-4)", async () => {
     const seen: Array<{ url: string; init?: RequestInit }> = [];
     const fetchFn = vi.fn(async (url: unknown, init?: RequestInit) => {
       seen.push({ url: String(url), init });
@@ -332,7 +332,8 @@ describe("DuckDuckGoDriver", () => {
     await expect(d.chat("gpt-5.4-mini", [{ role: "user", content: "hi" }])).resolves.toBe("ok");
     expect(solver).toHaveBeenCalledWith("aGFzaA==");
     const chatCall = seen.find((c) => c.url.endsWith("/chat"))!;
-    expect((chatCall.init!.headers as Record<string, string>)["x-vqd-4"]).toBe("solved:aGFzaA==");
+    expect((chatCall.init!.headers as Record<string, string>)["x-vqd-hash-1"]).toBe("solved:aGFzaA==");
+    expect((chatCall.init!.headers as Record<string, string>)["x-vqd-4"]).toBeUndefined();
   });
 });
 

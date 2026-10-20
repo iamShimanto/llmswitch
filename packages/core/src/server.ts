@@ -84,6 +84,34 @@ export function createServer(
   const savedWebhook = store.getSetting("alert_webhook_url");
   if (savedWebhook) alerter.setWebhookUrl(savedWebhook);
   const inspector = new Inspector();
+  // Seed the request feed from the persisted usage log so Live/Activity
+  // history survives restarts (the ring buffer itself is memory-only —
+  // prompts/responses are never written to the DB, history rows show
+  // metadata only).
+  try {
+    for (const u of store.recentUsage(50)) {
+      inspector.seed([
+        {
+          id: `hist-${u.ts}-${Math.random().toString(36).slice(2, 8)}`,
+          ts: u.ts,
+          keyId: u.keyId,
+          provider: u.provider,
+          model: u.model,
+          strategy: "history",
+          status: u.status === "ok" ? "ok" : "error",
+          latencyMs: u.latencyMs,
+          cached: false,
+          promptTokens: u.promptTokens,
+          completionTokens: u.completionTokens,
+          costUsd: u.costUsd,
+          request: [],
+          responsePreview: "",
+        },
+      ]);
+    }
+  } catch {
+    /* a seeding failure must never block boot */
+  }
   const router = createRouter(providers, { cache, semantic });
   const routingLog = new RoutingEventLog();
 

@@ -168,11 +168,15 @@ describe("duckduckgo-web executor", () => {
       "gpt-5.4-mini",
       { model: "gpt-5.4-mini", messages: [{ role: "user" as const, content: "hi" }] },
       fetchFn,
+      120_000,
+      async (h) => `solved:${h}`,
     );
     expect(res.response!.choices[0]!.message.content).toBe("Hello world");
     expect(res.providerId).toBe("duckduckgo-web");
     const chat = calls.find((c) => c.url.endsWith("/duckchat/v1/chat"))!;
-    expect(chat.headers["x-vqd-hash-1"]).toBe("vqd-token-123");
+    // the SOLVED challenge payload is sent — never the raw one
+    expect(chat.headers["x-vqd-hash-1"]).toBe("solved:vqd-token-123");
+    expect(chat.headers["x-fe-signals"]).toBeTruthy();
     expect("authorization" in chat.headers).toBe(false);
     // anonymous chat API forbids system/tool roles — system must be folded
     expect(chat.body).toContain("gpt-5.4-mini");

@@ -44,6 +44,7 @@ import {
   sseDataLines,
   type WebChatDriver,
 } from "./types.js";
+import { solveDuckDuckGoChallenge } from "./ddgChallenge.js";
 
 const DUCK_BASE = "https://duck.ai";
 const STATUS_URL = `${DUCK_BASE}/duckchat/v1/status`;
@@ -121,15 +122,18 @@ export interface DuckDuckGoDriverOptions {
   challengeSolver?: DuckDuckGoChallengeSolver;
 }
 
-function defaultChallengeSolver(): Promise<string> {
-  return Promise.reject(
-    new WebChatError(
+async function defaultChallengeSolver(hash1: string): Promise<string> {
+  // Real solver (ported from OmniRoute's challenge.ts): runs DDG's challenge
+  // JS in a node:vm sandbox with browser stubs and returns the solved
+  // payload, which is sent back in the x-vqd-hash-1 header of the chat call.
+  try {
+    return await solveDuckDuckGoChallenge(hash1, BROWSER_UA);
+  } catch (err) {
+    throw new WebChatError(
       "duckduckgo",
-      "DuckDuckGo returned an x-vqd-hash-1 anti-abuse challenge. Solving it requires the " +
-        "node:vm challenge solver from OmniRoute (executors/duckduckgo-web/challenge.ts), which " +
-        "is NOT ported — NEEDS LIVE VERIFICATION. Inject a solver via DuckDuckGoDriverOptions.",
-    ),
-  );
+      `DuckDuckGo anti-bot challenge solve failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export class DuckDuckGoDriver implements WebChatDriver {
@@ -141,6 +145,8 @@ export class DuckDuckGoDriver implements WebChatDriver {
 
   private cookie = "";
   private vqd4: string | null = null;
+  /** the SOLVED x-vqd-hash-1 payload (the raw challenge is never forwarded) */
+  private solvedHash1: string | null = null;
   private booted = false;
 
   constructor(
@@ -166,16 +172,15 @@ export class DuckDuckGoDriver implements WebChatDriver {
       );
     }
     const vqd4 = res.headers.get("x-vqd-4");
-    if (vqd4) {
-      this.vqd4 = vqd4;
-      this.booted = true;
-      return;
-    }
-    // Anti-abuse challenge path: OmniRoute solves the x-vqd-hash-1 payload with
-    // its node:vm challenge solver. That solver is not ported; the hook is here.
+    if (vqd4) this.vqd4 = vqd4;
+    // Anti-abuse challenge path: solve the x-vqd-hash-1 payload; the SOLVED
+    // value travels in the x-vqd-hash-1 header of the chat request (the raw
+    // challenge must never be forwarded — upstream answers it with 418).
     const hash1 = res.headers.get("x-vqd-hash-1");
     if (hash1) {
-      this.vqd4 = await (this.opts.challengeSolver ?? defaultChallengeSolver)(hash1);
+      this.solvedHash1 = await (this.opts.challengeSolver ?? defaultChallengeSolver)(hash1);
+    }
+    if (this.vqd4 || this.solvedHash1) {
       this.booted = true;
       return;
     }
@@ -224,6 +229,7 @@ export class DuckDuckGoDriver implements WebChatDriver {
         "x-ddg-journey-id": randomUUID().replaceAll("-", ""),
         "x-fe-signals": makeFeSignals(),
         ...(this.vqd4 ? { "x-vqd-4": this.vqd4 } : {}),
+        ...(this.solvedHash1 ? { "x-vqd-hash-1": this.solvedHash1 } : {}),
       },
       body: JSON.stringify(this.buildPayload(model, messages)),
       signal: AbortSignal.timeout(120_000),
@@ -247,13 +253,15 @@ export class DuckDuckGoDriver implements WebChatDriver {
       }
       throw new WebChatError(this.id, `DuckDuckGo chat failed (HTTP ${res.status}): ${body.slice(0, 200)}`);
     }
-    // Remember the rotated challenge token for the next request (OmniRoute does).
+    // Remember rotated tokens for the next request (OmniRoute does).
+    const nextVqd4 = res.headers.get("x-vqd-4");
+    if (nextVqd4) this.vqd4 = nextVqd4;
     const nextHash = res.headers.get("x-vqd-hash-1");
-    if (nextHash && this.opts.challengeSolver) {
+    if (nextHash) {
       try {
-        this.vqd4 = await this.opts.challengeSolver(nextHash);
+        this.solvedHash1 = await (this.opts.challengeSolver ?? defaultChallengeSolver)(nextHash);
       } catch {
-        /* keep the old token */
+        /* keep the previously solved payload */
       }
     }
     for await (const data of sseDataLines(res.body)) {

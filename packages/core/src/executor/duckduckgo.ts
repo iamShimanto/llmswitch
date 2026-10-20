@@ -10,17 +10,15 @@
  *   2. POST {base}/duckchat/v1/chat     → SSE stream of `data:` lines whose
  *      JSON payloads carry incremental `message` (or `content`) fragments.
  *
- * What OmniRoute has that this port does NOT: the JavaScript anti-bot
- * challenge solver (vm-evaluated proof-of-work + fe-signals), the browser
- * fingerprints session pool, and a Playwright browser-backed fallback.
- *
- * ⚠️ HONEST LIMITATION: Duck.ai gates anonymous chat behind that challenge.
- * Probed from a datacenter IP during the original P9 research, it answers
- * HTTP 418 `ERR_CHALLENGE` — so from servers/cloud VMs this executor will
- * typically surface an anti-bot error, while from residential IPs (or when
- * the challenge is not triggered) the plain flow above works. Treat it as
- * experimental; the router's fallback chain just moves on to the next
- * provider when it fails. No cookies/account are involved either way.
+ * The JavaScript anti-bot challenge (x-vqd-hash-1) IS solved here — the
+ * solver is ported from OmniRoute's challenge.ts into ./ddgChallenge.ts
+ * (node:vm sandbox + browser stubs); the SOLVED payload is sent back in the
+ * x-vqd-hash-1 header of the chat call, exactly like the real client (the
+ * raw challenge must never be forwarded). What this port still lacks vs
+ * OmniRoute: their browser-fingerprint session pool and Playwright
+ * fallback. Even with the challenge solved, Duck.ai may still 418 from
+ * IPs it has hard-flagged — that surfaces as a clear anti-bot error and
+ * the router's fallback chain moves on to the next provider.
  */
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import type {
@@ -31,6 +29,8 @@ import type {
 } from "../providers/types.js";
 import { UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
+import { makeDuckDuckGoFeSignals, solveDuckDuckGoChallenge } from "./ddgChallenge.js";
+
 
 /** Browser-ish headers Duck.ai expects (mirrors OmniRoute's FAKE_HEADERS). */
 const BROWSER_HEADERS: Record<string, string> = {
@@ -41,6 +41,11 @@ const BROWSER_HEADERS: Record<string, string> = {
   "user-agent":
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
 };
+
+/** Solve an x-vqd-hash-1 challenge payload (injectable for tests). */
+export type DdgChallengeSolver = (hash1: string) => Promise<string>;
+const defaultSolver: DdgChallengeSolver = (hash1) =>
+  solveDuckDuckGoChallenge(hash1, BROWSER_HEADERS["user-agent"]);
 
 /**
  * Duck.ai rejects `system`/`tool` roles — chat accepts user/assistant only.
@@ -65,6 +70,28 @@ function normalizeMessages(messages: ChatMessage[]): Array<{ role: string; conte
   }
   return out;
 }
+
+/** Model aliases (ported from OmniRoute's duckduckgo-web/models.ts). */
+const MODEL_ALIASES: Record<string, string> = {
+  "gpt-4o-mini": "gpt-5.4-mini",
+  "gpt-5-mini": "gpt-5.4-mini",
+  "o3-mini": "gpt-5.4-mini",
+  "gpt-5.4-nano": "gpt-5.4-mini",
+  "llama-4-scout": "gpt-5.4-mini",
+  "claude-3-5-haiku-20241022": "claude-haiku-4-5",
+  "mistral-small-2501": "mistral-small-2603",
+  "gpt-oss-120b": "tinfoil/gpt-oss-120b",
+  "gemma4-31b": "tinfoil/gemma4-31b",
+};
+
+/** reasoningEffort is REQUIRED by duckchat — omitting it earns ERR_BAD_REQUEST. */
+function reasoningEffort(model: string): string {
+  if (model === "claude-haiku-4-5" || model === "tinfoil/gpt-oss-120b") return "low";
+  return "none";
+}
+
+const FE_VERSION_PATTERN = /serp_\d{8}_\d{6}_[A-Z]{2}-[0-9a-f]{20,40}/;
+const DEFAULT_FE_VERSION = "serp_20260424_180649_ET-0bdc33b2a02ebf8f235def65d887787f694720a1";
 
 /** Extract text from one Duck.ai SSE payload (`message` or `content` field). */
 function fragmentText(data: unknown): string {
@@ -95,9 +122,9 @@ function ddgErrorMessage(status: number, bodyText: string): string {
     const parsed = JSON.parse(bodyText) as { type?: unknown };
     if (parsed.type === "ERR_CHALLENGE" || parsed.type === "ERR_BN_LIMIT") {
       return (
-        `DuckDuckGo AI Chat anti-bot challenge (${String(parsed.type)}): anonymous chat ` +
-        "is gated behind a JavaScript challenge this client does not solve. It typically " +
-        "triggers on datacenter IPs (HTTP 418) — retry later or from a residential IP."
+        `DuckDuckGo AI Chat anti-bot challenge (${String(parsed.type)}): the challenge was ` +
+        "solved but Duck.ai still refused this session (HTTP 418) — the IP may be flagged; " +
+        "retry later or from a residential IP."
       );
     }
     if (typeof parsed.type === "string") return `DuckDuckGo AI Chat error: ${parsed.type}`;
@@ -120,18 +147,51 @@ export async function executeDuckDuckGoChat(
   body: ChatCompletionRequest,
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
+  solve: DdgChallengeSolver = defaultSolver,
 ): Promise<ExecuteResult> {
   const started = Date.now();
   const base = provider.baseUrl.replace(/\/$/, "");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
+    // 0) warm the session like the real client: GET the homepage for seed
+    // cookies + the live x-fe-version token (both cross-checked upstream).
+    const jar = new Map<string, string>();
+    const harvest = (res: Response) => {
+      try {
+        for (const sc of res.headers.getSetCookie()) {
+          const pair = sc.split(";")[0];
+          const eq = pair.indexOf("=");
+          if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+        }
+      } catch {
+        /* older runtimes without getSetCookie */
+      }
+    };
+    const cookieHeader = () =>
+      [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    let feVersion = DEFAULT_FE_VERSION;
+    try {
+      const home = await fetchFn(`${base}/`, { headers: { ...BROWSER_HEADERS }, signal: ctrl.signal });
+      harvest(home);
+      const html = await home.text().catch(() => "");
+      feVersion = html.match(FE_VERSION_PATTERN)?.[0] ?? feVersion;
+    } catch {
+      /* warm-up is best-effort */
+    }
+
     // 1) session tokens
     const statusRes = await fetchFn(`${base}/duckchat/v1/status`, {
       method: "GET",
-      headers: { ...BROWSER_HEADERS, "x-vqd-accept": "1", "cache-control": "no-store" },
+      headers: {
+        ...BROWSER_HEADERS,
+        "x-vqd-accept": "1",
+        "cache-control": "no-store",
+        ...(jar.size ? { cookie: cookieHeader() } : {}),
+      },
       signal: ctrl.signal,
     });
+    harvest(statusRes);
     if (!statusRes.ok) {
       const text = await statusRes.text().catch(() => "");
       throw new UpstreamError(
@@ -142,7 +202,20 @@ export async function executeDuckDuckGoChat(
     }
     const vqd4 = statusRes.headers.get("x-vqd-4");
     const vqdHash1 = statusRes.headers.get("x-vqd-hash-1");
-    if (!vqd4 && !vqdHash1) {
+    // Solve the anti-bot challenge; only the SOLVED payload is ever sent.
+    let solvedHash1: string | null = null;
+    if (vqdHash1) {
+      try {
+        solvedHash1 = await solve(vqdHash1);
+      } catch (err) {
+        throw new UpstreamError(
+          "server_error",
+          418,
+          `DuckDuckGo challenge solve failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    if (!vqd4 && !solvedHash1) {
       throw new UpstreamError(
         "server_error",
         statusRes.status,
@@ -151,13 +224,15 @@ export async function executeDuckDuckGoChat(
     }
 
     // 2) chat
+    const wireModel = MODEL_ALIASES[model] ?? model;
     const payload = {
-      model,
+      model: wireModel,
       metadata: {
         toolChoice: { NewsSearch: false, VideosSearch: false, LocalSearch: false, WeatherForecast: false },
       },
       messages: normalizeMessages(body.messages),
       canUseTools: false,
+      reasoningEffort: reasoningEffort(wireModel),
       canUseApproxLocation: null,
       canDelegateImageGeneration: null,
       durableStream: durableStream(),
@@ -169,7 +244,11 @@ export async function executeDuckDuckGoChat(
         accept: "text/event-stream",
         "content-type": "application/json",
         ...(vqd4 ? { "x-vqd-4": vqd4 } : {}),
-        ...(vqdHash1 ? { "x-vqd-hash-1": vqdHash1 } : {}),
+        ...(solvedHash1 ? { "x-vqd-hash-1": solvedHash1 } : {}),
+        "x-fe-signals": makeDuckDuckGoFeSignals(),
+        "x-fe-version": feVersion,
+        "x-ddg-journey-id": randomUUID().replaceAll("-", ""),
+        ...(jar.size ? { cookie: cookieHeader() } : {}),
       },
       body: JSON.stringify(payload),
       signal: ctrl.signal,
