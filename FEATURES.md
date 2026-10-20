@@ -554,3 +554,14 @@ Pack suite: 235/235 (4 new bridge image tests). Core: 489/489.
 - **Media page**: one-click "Create a gateway key for me" button
   (creates a media-page key via /api/keys and fills the box) — the
   paste-a-key step blocked first use.
+
+## Rotation error-masking fix (2026-10-21)
+The session-account loop appended the default (no-account) candidate
+last; when a real account failed (e.g. Antigravity 429 "exhausted
+your capacity on this model — resets after ~4h24m") and the default
+candidate had no session, the surfaced error was the default's
+misleading "no session — run: llmswitch login" instead of the real
+verdict. The loop now keeps the first real-account error and prefers
+it when giving up. (Live case: the owner's Antigravity image quota
+was exhausted by gateway testing; the dashboard showed a 502
+"no session" — the account page's lastError held the true 429.)
