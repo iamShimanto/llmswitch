@@ -26,6 +26,7 @@ import { CooldownTracker } from "../quota/limiter.js";
 import { PromptCache } from "../cache/index.js";
 import { QuotaTelemetry, type QuotaInfo } from "../quota/telemetry.js";
 import { orderComboTargets, type RouterCombo } from "../combos/index.js";
+import { autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import { buildEmulationPrompt, nativeTools, parseEmulatedToolCall } from "../tools/emulation.js";
 import { SemanticCache } from "../cache/semantic.js";
 import { classifyError, isRetryable } from "./errors.js";
@@ -52,6 +53,8 @@ export interface RouteOptions {
   bypassCache?: boolean;
   /** internal: router-combo nesting depth (recursion guard) */
   comboDepth?: number;
+  /** pin execution to one provider account (combo target account pin) */
+  forceAccountId?: string;
 }
 
 export type RouterEvent =
@@ -216,9 +219,27 @@ async function executeWithRotation(
   fetchFn: typeof fetch,
   timeoutMs: number,
   hooks?: AccountHooks,
+  forceAccountId?: string,
 ): Promise<ExecuteResult> {
   const accountStrategy = hooks?.strategy() ?? "round-robin";
   const sessionAccounts = (provider.accounts ?? []).filter((a) => a.kind === "session");
+  if (forceAccountId && sessionAccounts.some((a) => a.id === forceAccountId)) {
+    // Pinned session account: try ONLY that account; its failure is final
+    // for this provider so combo fall-through can move to the next target.
+    try {
+      const r = await runDedicated(provider, model, body, fetchFn, timeoutMs, forceAccountId);
+      if (r !== null) {
+        hooks?.record(forceAccountId, true);
+        return { ...r, accountId: forceAccountId };
+      }
+    } catch (err) {
+      const kind = classifyError(err);
+      if (kind === "auth_error" || kind === "rate_limited") {
+        hooks?.record(forceAccountId, false, err instanceof Error ? err.message : String(err));
+      }
+      throw err;
+    }
+  }
   if (sessionAccounts.length > 0) {
     const counts = new Map((hooks?.stats(provider.id) ?? []).map((x) => [x.id, x.calls]));
     const ordered = orderAccounts(
@@ -254,6 +275,17 @@ async function executeWithRotation(
   }
 
   const tried = new Set<string>();
+  // Pinned API-key account: pre-exclude every other key in the pool.
+  if (forceAccountId && provider.keyAccounts) {
+    const pinnedKey = [...provider.keyAccounts.entries()].find(
+      ([, acct]) => acct === forceAccountId,
+    )?.[0];
+    if (pinnedKey !== undefined) {
+      for (const k of provider.allKeys ?? [provider.apiKey]) {
+        if (k !== pinnedKey) tried.add(k);
+      }
+    }
+  }
   let lastErr: unknown = null;
   for (;;) {
     const key = pool.next(tried, Date.now(), accountStrategy);
@@ -299,6 +331,7 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
   const routingRulesFn = opts.routingRules;
   const combosFn = opts.combos;
   const comboCursors = new Map<string, number>();
+  const comboWinners = new Map<string, string>();
 
   function record(id: string, latencyMs: number, failed: boolean): void {
     const s = stats.get(id) ?? emptyStats();
@@ -308,6 +341,50 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     stats.set(id, s);
   }
 
+  /** OmniRoute-style "provider/model" target refs → our "provider:model". */
+  function normalizeTargetModel(model: string): string {
+    if (model.includes(":")) return model;
+    const slash = model.indexOf("/");
+    if (slash > 0) {
+      const prefix = model.slice(0, slash);
+      if (providers.some((p) => p.id === prefix)) {
+        return `${prefix}:${model.slice(slash + 1)}`;
+      }
+    }
+    return model;
+  }
+
+  function comboBody(combo: RouterCombo, body: ChatCompletionRequest): ChatCompletionRequest {
+    const prompt = combo.config?.systemPrompt;
+    if (!prompt) return body;
+    const messages = [...body.messages];
+    const sysIdx = messages.findIndex((m) => m.role === "system");
+    if (sysIdx >= 0) {
+      messages[sysIdx] = { ...messages[sysIdx]!, content: prompt };
+    } else {
+      messages.unshift({ role: "system", content: prompt });
+    }
+    return { ...body, messages };
+  }
+
+  /** Response validation (OmniRoute advanced setting): a 200 reply that
+   *  fails the checks counts as a target failure → fall through. */
+  function comboValidationError(combo: RouterCombo, result: ExecuteResult): string | null {
+    const v = combo.config?.validation;
+    if (!v || !result.response) return null;
+    const content = result.response.choices?.[0]?.message?.content ?? "";
+    for (const f of v.forbidden ?? []) {
+      if (content.includes(f)) return `validation: reply contains forbidden text "${f}"`;
+    }
+    for (const r of v.required ?? []) {
+      if (!content.includes(r)) return `validation: reply is missing required text "${r}"`;
+    }
+    if (v.minLength != null && content.length < v.minLength) {
+      return `validation: reply too short (${content.length} < ${v.minLength} chars)`;
+    }
+    return null;
+  }
+
   async function runRouterCombo(
     combo: RouterCombo,
     body: ChatCompletionRequest,
@@ -315,29 +392,51 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
   ): Promise<ExecuteResult> {
     const cursor = comboCursors.get(combo.name) ?? 0;
     if (combo.strategy === "round-robin") comboCursors.set(combo.name, cursor + 1);
-    const ordered = orderComboTargets(combo.strategy, combo.targets, {
+    const providerOf = (model: string) => {
+      const m = normalizeTargetModel(model);
+      if (m.includes(":")) return m.split(":")[0]!;
+      return providers.find((p) => p.models.includes(m))?.id ?? "";
+    };
+    let targets = combo.targets;
+    // context-relay: lead with the last target that answered for this combo.
+    if (combo.strategy === "context-relay") {
+      const winner = comboWinners.get(combo.name);
+      if (winner) {
+        const idx = targets.findIndex((t) => t.model === winner);
+        if (idx > 0) targets = [targets[idx]!, ...targets.filter((_, i) => i !== idx)];
+      }
+    }
+    const ordered = orderComboTargets(combo.strategy, targets, {
       providerCalls: (pid) => stats.get(pid)?.calls ?? 0,
-      providerOf: (model) => {
-        if (model.includes(":")) return model.split(":")[0]!;
-        return providers.find((p) => p.models.includes(model))?.id ?? "";
-      },
+      providerOf,
       providerTier: (model) => {
-        const pid = model.includes(":")
-          ? model.split(":")[0]!
-          : providers.find((p) => p.models.includes(model))?.id;
+        const pid = providerOf(model);
         return providers.find((p) => p.id === pid)?.costTier ?? 3;
       },
+      quotaShare: (model) => telemetry.share(providerOf(model)),
       cursor,
     });
+    const effectiveBody = comboBody(combo, body);
     const tried: string[] = [];
     let lastError: unknown = null;
     for (const t of ordered) {
       tried.push(t.model);
       try {
-        return await route(
-          { ...body, model: t.model },
-          { ...opts, comboDepth: (opts.comboDepth ?? 0) + 1 },
+        const result = await route(
+          { ...effectiveBody, model: normalizeTargetModel(t.model) },
+          {
+            ...opts,
+            comboDepth: (opts.comboDepth ?? 0) + 1,
+            forceAccountId: t.accountId ?? undefined,
+          },
         );
+        const vErr = comboValidationError(combo, result);
+        if (vErr) {
+          lastError = new Error(vErr);
+          continue; // fall through to the next target
+        }
+        comboWinners.set(combo.name, t.model);
+        return result;
       } catch (err) {
         lastError = err; // combos fall through on ANY target failure
       }
@@ -352,9 +451,31 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     const timeoutMs = opts.timeoutMs ?? 120_000;
 
     // Router combos (virtual models) intercept before normal resolution.
-    if ((opts.comboDepth ?? 0) < 3 && combosFn && body.model !== "auto") {
-      const combo = combosFn().find((c) => c.name === body.model);
+    if ((opts.comboDepth ?? 0) < 3 && body.model !== "auto") {
+      const combo = combosFn?.().find((c) => c.name === body.model && c.enabled !== false);
       if (combo) return runRouterCombo(combo, body, opts);
+      // Built-in auto/* catalog: synthesize a weighted combo on the fly
+      // from the connected providers (zero setup, OmniRoute-style).
+      if (body.model.startsWith("auto/")) {
+        const template = autoTemplate(body.model);
+        if (template) {
+          const targets = buildAutoTargets(template, providers);
+          if (targets.length > 0) {
+            return runRouterCombo(
+              {
+                name: template.id,
+                kind: "router",
+                strategy: "weighted",
+                targets,
+                config: { systemPrompt: template.systemPrompt },
+                createdAt: 0,
+              },
+              body,
+              opts,
+            );
+          }
+        }
+      }
     }
 
     let target = resolveTarget(providers, body.model, strategy, stats);
@@ -465,7 +586,7 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
           pools.set(provider.id, pool);
           poolSigs.set(provider.id, sig);
         }
-        const result = await executeWithRotation(pool, provider, model, attemptBody, fetchFn, timeoutMs, accountHooks);
+        const result = await executeWithRotation(pool, provider, model, attemptBody, fetchFn, timeoutMs, accountHooks, opts.forceAccountId);
         if (emulate && result.response) {
           const tc = parseEmulatedToolCall(result.response.choices[0]?.message.content ?? "");
           if (tc) {

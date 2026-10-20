@@ -242,18 +242,17 @@ export const api = {
     strategy?: string;
     targets?: ComboTarget[];
     steps?: Array<{ model: string; system?: string }>;
+    config?: ComboConfig;
+    enabled?: boolean;
   }) => req<{ name: string; kind: string }>("/api/combos", { method: "POST", body: JSON.stringify(def) }),
   deleteCombo: (name: string) =>
-    req<{ deleted: boolean }>(`/api/combos/${encodeURIComponent(name)}`, { method: "DELETE" }),
+    req<{ deleted: boolean }>(`/api/combos?name=${encodeURIComponent(name)}`, { method: "DELETE" }),
   testCombo: (name: string) =>
-    req<{
-      ok: boolean;
-      provider?: string;
-      model?: string;
-      latencyMs: number;
-      text?: string;
-      error?: string;
-    }>(`/api/combos/${encodeURIComponent(name)}/test`, { method: "POST", body: JSON.stringify({}) }),
+    req<ComboTestResult>("/api/combos/test", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  autoCatalog: () => req<{ templates: AutoTemplateInfo[] }>("/api/combos/auto-catalog"),
   setDefaultModel: (id: string, model: string) =>
     req<{ ok: boolean; defaultModel: string }>(`/api/providers/${id}/default-model`, {
       method: "POST",
@@ -471,6 +470,38 @@ export interface ProviderAccount {
 export interface ComboTarget {
   model: string;
   weight?: number;
+  accountId?: string | null;
+}
+
+export interface ComboConfig {
+  systemPrompt?: string;
+  contextLength?: number;
+  validation?: { forbidden?: string[]; required?: string[]; minLength?: number };
+}
+
+export interface AutoTemplateInfo {
+  id: string;
+  title: string;
+  tags: string[];
+  systemPrompt: string;
+  strategy: string;
+  candidates: number;
+}
+
+export interface ComboTestResult {
+  ok: boolean;
+  combo: string;
+  resolvedBy: { target: string; provider: string; model: string } | null;
+  results: Array<{
+    target: string;
+    accountId: string | null;
+    ok: boolean;
+    provider?: string;
+    model?: string;
+    latencyMs: number;
+    text?: string;
+    error?: string;
+  }>;
 }
 
 export interface ServerCombo {
@@ -480,6 +511,8 @@ export interface ServerCombo {
   strategy: string | null;
   targets: ComboTarget[] | null;
   steps: Array<{ model: string; system?: string }> | null;
+  config: ComboConfig | null;
+  enabled: boolean;
 }
 
 export interface RoutingRule {
