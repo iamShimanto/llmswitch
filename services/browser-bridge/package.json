@@ -1,0 +1,1 @@
+{"dependencies":{"puppeteer-core":"^23.11.1"},"description":"Executes ChatGPT Web turns inside a real headless Chrome (Sentinel/Turnstile complete in-page) for the LLMSwitch gateway.","main":"server.mjs","name":"llmswitch-browser-bridge","private":true,"scripts":{"start":"node server.mjs"},"type":"module","version":"0.1.0"}

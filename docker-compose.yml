@@ -13,6 +13,19 @@ services:
     environment:
       PORT: 6000
       DATA_DIR: /app/data
+      CHATGPT_BRIDGE_URL: http://browser-bridge:6100
+    depends_on:
+      - browser-bridge
+
+  browser-bridge:
+    build: ./services/browser-bridge
+    image: llmswitch-browser-bridge:latest
+    container_name: llmswitch-browser-bridge
+    restart: unless-stopped
+    # Internal only — the gateway reaches it over the compose network;
+    # no port is published to the host.
+    expose:
+      - "6100"
 
 volumes:
   llmswitch-data:

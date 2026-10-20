@@ -360,6 +360,39 @@ export class ChatGptWebDriver implements WebChatDriver {
     }
   }
 
+  /**
+   * Execute the turn through the browser bridge (CHATGPT_BRIDGE_URL):
+   * a real headless Chrome on the gateway host runs the turn inside
+   * chatgpt.com, where the page's own Sentinel/Turnstile machinery
+   * completes invisibly. Verified live: prepare/finalize/req all 200
+   * and the assistant answer renders, from the same datacenter IP that
+   * the plain-HTTP flow gets Turnstile-walled on.
+   */
+  protected async turnViaBridge(bridgeUrl: string, prompt: string): Promise<string> {
+    const cookies = this.jar.headerFor(CONVERSATION_URL);
+    let res: Response;
+    try {
+      res = await this.fetchFn(`${bridgeUrl.replace(/\/$/, "")}/turn`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, cookies: cookies || undefined }),
+        signal: AbortSignal.timeout(150_000),
+      });
+    } catch (err) {
+      throw new WebChatError(
+        this.id,
+        `browser bridge unreachable at ${bridgeUrl} (${err instanceof Error ? err.message : String(err)}) — is the browser-bridge service running?`,
+      );
+    }
+    const data = (await res.json().catch(() => null)) as
+      | { ok?: boolean; text?: string; error?: string }
+      | null;
+    if (!data?.ok || typeof data.text !== "string" || !data.text) {
+      throw new WebChatError(this.id, `browser bridge: ${data?.error ?? `HTTP ${res.status}`}`);
+    }
+    return data.text;
+  }
+
   /** Run one conversation turn, yielding cumulative assistant-text snapshots. */
   protected async *turnSnapshots(
     model: string,
@@ -368,6 +401,14 @@ export class ChatGptWebDriver implements WebChatDriver {
     await this.bootstrap();
     const { wireModel, reason } = this.resolveWireModel(model);
     const prompt = buildPrompt(messages, this.id);
+
+    // Browser bridge configured → the turn runs in a real browser and
+    // the anti-abuse tokens are minted by the page itself.
+    const bridgeUrl = (process.env.CHATGPT_BRIDGE_URL ?? "").trim();
+    if (bridgeUrl) {
+      yield await this.turnViaBridge(bridgeUrl, prompt);
+      return;
+    }
 
     const headers: Record<string, string> = {
       accept: "application/json",
