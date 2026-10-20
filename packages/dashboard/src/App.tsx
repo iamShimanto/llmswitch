@@ -6,6 +6,7 @@ import { initTheme } from "./theme";
 import { ThemeToggle } from "./components/ThemeToggle";
 import Home from "./pages/Home";
 import Providers from "./pages/Providers";
+import Live from "./pages/Live";
 import Usage from "./pages/Usage";
 import Keys from "./pages/Keys";
 import Playground from "./pages/Playground";
@@ -78,6 +79,7 @@ const SECTIONS: Section[] = [
     labelKey: "nav.providers",
     pages: [
       { id: "providers", labelKey: "nav.providers" },
+  { id: "live", labelKey: "nav.live" },
       { id: "models", labelKey: "nav.models" },
       { id: "leaderboard", labelKey: "nav.leaderboard" },
       { id: "radar", labelKey: "nav.radar" },
@@ -343,6 +345,7 @@ function AppInner() {
         {tab === "analytics" && <Analytics />}
         {tab === "activity" && <Activity />}
         {tab === "providers" && <Providers />}
+        {tab === "live" && <Live />}
         {tab === "models" && <Models />}
         {tab === "leaderboard" && <Leaderboard />}
         {tab === "radar" && <Radar />}

@@ -17,9 +17,24 @@ const CAP = 200;
 export class RoutingEventLog {
   private buf: RoutingEventRecord[] = [];
 
+  private listeners = new Set<(e: RoutingEventRecord) => void>();
+
+  subscribe(fn: (e: RoutingEventRecord) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
   record(e: Omit<RoutingEventRecord, "ts">): void {
-    this.buf.push({ ...e, ts: Date.now() });
+    const rec = { ...e, ts: Date.now() };
+    this.buf.push(rec);
     if (this.buf.length > CAP) this.buf.splice(0, this.buf.length - CAP);
+    for (const fn of this.listeners) {
+      try {
+        fn(rec);
+      } catch {
+        /* ignore listener errors */
+      }
+    }
   }
 
   recent(n = 50): RoutingEventRecord[] {
