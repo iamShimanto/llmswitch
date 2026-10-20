@@ -1714,6 +1714,29 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     res.json(inspector.list(limit));
   });
 
+  // Live request monitoring (SSE): snapshot + every new inspector entry and
+  // routing event as it happens. The dashboard's Live page consumes this.
+  app.get("/api/live", (req: Request, res: Response) => {
+    res.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    const send = (event: string, data: unknown) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    send("snapshot", { entries: inspector.list(50), routing: routingLog.recent(20) });
+    const unsubEntry = inspector.subscribe((entry) => send("request", entry));
+    const unsubRouting = routingLog.subscribe((event) => send("routing", event));
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 20_000);
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubEntry();
+      unsubRouting();
+    });
+  });
+
   app.get("/api/inspector/:id", (req: Request, res: Response) => {
     const e = inspector.get(req.params.id);
     if (!e) {

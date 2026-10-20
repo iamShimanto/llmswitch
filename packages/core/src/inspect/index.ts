@@ -43,6 +43,14 @@ export class Inspector {
 
   constructor(private cap = 200) {}
 
+  private listeners = new Set<(e: InspectEntry) => void>();
+
+  /** Live monitoring: notified synchronously for every recorded request. */
+  subscribe(fn: (e: InspectEntry) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
   record(e: Omit<InspectEntry, "id" | "ts">): InspectEntry {
     const entry: InspectEntry = {
       ...e,
@@ -51,6 +59,13 @@ export class Inspector {
     };
     this.entries.unshift(entry);
     if (this.entries.length > this.cap) this.entries.length = this.cap;
+    for (const fn of this.listeners) {
+      try {
+        fn(entry);
+      } catch {
+        /* a broken listener must never break request handling */
+      }
+    }
     return entry;
   }
 
