@@ -144,17 +144,61 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const PRIMARY: Page[] = [
-  { id: "home", labelKey: "nav.overview" },
-  { id: "providers", labelKey: "nav.providers" },
-  { id: "models", labelKey: "nav.models" },
-  { id: "playground", labelKey: "nav.playground" },
-  { id: "keys", labelKey: "nav.apiKeys" },
-  { id: "usage", labelKey: "nav.usage" },
-  { id: "analytics", labelKey: "nav.analytics" },
-  { id: "settings", labelKey: "nav.settings" },
+// ---- Sidebar model: the useful pages first, everything else grouped ----
+// SECTIONS above is the master page registry; the sidebar re-orders it.
+const PAGE_BY_ID = new Map<string, Page>();
+for (const sec of SECTIONS) for (const p of sec.pages) PAGE_BY_ID.set(p.id, p);
+const pg = (id: string): Page => PAGE_BY_ID.get(id)!;
+
+const PAGE_ICONS: Record<string, string> = {
+  home: "🏠", providers: "🔌", live: "📡", models: "🧠", combos: "🧬",
+  playground: "🎮", routing: "🧭", keys: "🔑", usage: "📊", analytics: "📈",
+  quotas: "🥧", settings: "⚙️", sessions: "🔐", limits: "🚦", costs: "💰",
+  batches: "📦", webhooks: "🪝", audit: "📜", apimanager: "🗂️",
+  orchestration: "🎼", agents: "🤖", skills: "✨", leaderboard: "🏆",
+  radar: "🛰️", discovery: "🔭", freetiers: "🎁", media: "🎬",
+  translators: "🔤", activity: "🕘", onboarding: "👋", explain: "🗺️",
+  inspector: "🔍", search: "🌐", mcp: "🧩", compression: "🗜️",
+  context: "📐", conversations: "💬", logs: "📋", health: "❤️",
+  runtime: "⏱️", cache: "💾", relay: "🔁", plugins: "🪄", memory: "💭",
+  profile: "👤", changelog: "🗒️", chaos: "🎲",
+};
+
+/** Daily-use pages — always visible at the top of the sidebar. */
+const NAV_MAIN: Page[] = [
+  "home", "providers", "live", "models", "combos", "playground", "routing",
+  "keys", "usage", "analytics", "quotas",
+].map(pg);
+/** Pinned at the very bottom of the sidebar. */
+const NAV_BOTTOM: Page[] = ["settings"].map(pg);
+/** Everything else, in tidy collapsible groups. */
+const NAV_GROUPS: Section[] = [
+  {
+    id: "management",
+    labelKey: "nav.sectionManagement",
+    pages: ["sessions", "limits", "costs", "batches", "webhooks", "audit", "apimanager", "orchestration", "agents", "skills"].map(pg),
+  },
+  {
+    id: "explore",
+    labelKey: "nav.sectionExplore",
+    pages: ["leaderboard", "radar", "discovery", "freetiers", "media", "translators", "explain", "activity", "onboarding"].map(pg),
+  },
+  {
+    id: "tools",
+    labelKey: "nav.sectionTools",
+    pages: ["inspector", "search", "mcp", "compression", "context", "conversations"].map(pg),
+  },
+  {
+    id: "system",
+    labelKey: "nav.sectionSystem",
+    pages: ["logs", "health", "runtime", "cache", "relay", "plugins", "memory", "profile", "changelog", "chaos"].map(pg),
+  },
 ];
-const PRIMARY_IDS = new Set(PRIMARY.map((p) => p.id));
+const ALL_PAGES: Page[] = [
+  ...NAV_MAIN,
+  ...NAV_BOTTOM,
+  ...NAV_GROUPS.flatMap((g) => g.pages),
+];
 
 // Hash routing: the current page lives in the URL (#/providers) so a browser
 // refresh — or sharing the link — stays on the same page instead of
@@ -162,18 +206,13 @@ const PRIMARY_IDS = new Set(PRIMARY.map((p) => p.id));
 const ALL_TAB_IDS: string[] = [];
 function collectTabIds(): string[] {
   if (ALL_TAB_IDS.length > 0) return ALL_TAB_IDS;
-  for (const p of PRIMARY) ALL_TAB_IDS.push(p.id);
-  for (const sec of ADVANCED_SECTIONS) for (const p of sec.pages) ALL_TAB_IDS.push(p.id);
+  for (const p of ALL_PAGES) ALL_TAB_IDS.push(p.id);
   return ALL_TAB_IDS;
 }
 function tabFromHash(): string | null {
   const h = window.location.hash.replace(/^#\/?/, "");
   return h && collectTabIds().includes(h) ? h : null;
 }
-const ADVANCED_SECTIONS: Section[] = SECTIONS.map((sec) => ({
-  ...sec,
-  pages: sec.pages.filter((p) => !PRIMARY_IDS.has(p.id)),
-})).filter((sec) => sec.pages.length > 0);
 
 type TabId = string;
 
@@ -218,16 +257,29 @@ function AppInner() {
     }
   }, []);
   const [mobileNav, setMobileNav] = useState(false);
-  const [open, setOpen] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(ADVANCED_SECTIONS.map((sec) => [sec.id, false])),
-  );
-  // auto-open the section containing the active page
+  const [navQuery, setNavQuery] = useState("");
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("llmswitch_nav_open") ?? "{}") as Record<string, boolean>;
+      return Object.fromEntries(NAV_GROUPS.map((sec) => [sec.id, saved[sec.id] ?? false]));
+    } catch {
+      return Object.fromEntries(NAV_GROUPS.map((sec) => [sec.id, false]));
+    }
+  });
+  // auto-open the group containing the active page
   useEffect(() => {
-    const sec = ADVANCED_SECTIONS.find((x) => x.pages.some((p) => p.id === tab));
+    const sec = NAV_GROUPS.find((x) => x.pages.some((p) => p.id === tab));
     if (sec) setOpen((o) => ({ ...o, [sec.id]: true }));
   }, [tab]);
 
-  const toggle = (id: string) => setOpen((o) => ({ ...o, [id]: !o[id] }));
+  const toggle = (id: string) =>
+    setOpen((o) => {
+      const next = { ...o, [id]: !o[id] };
+      try {
+        localStorage.setItem("llmswitch_nav_open", JSON.stringify(next));
+      } catch { /* private mode */ }
+      return next;
+    });
 
   if (authed === null) {
     return (
@@ -243,24 +295,39 @@ function AppInner() {
     setMobileNav(false);
   };
 
-  const navItem = (page: Page) => (
-    <button
-      key={page.id}
-      onClick={() => go(page.id)}
-      className={`w-full rounded-lg px-3 py-2 text-left text-sm ${
-        tab === page.id ? "bg-zinc-800 font-medium text-white" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
-      }`}
-    >
-      {t(page.labelKey)}
-    </button>
-  );
+  const navItem = (page: Page) => {
+    const active = tab === page.id;
+    return (
+      <button
+        key={page.id}
+        onClick={() => go(page.id)}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition ${
+          active
+            ? "bg-amber-500/10 font-medium text-amber-200 shadow-[inset_3px_0_0_0_#d97706]"
+            : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+        }`}
+      >
+        <span className="w-5 shrink-0 text-center text-[15px] leading-none">
+          {PAGE_ICONS[page.id] ?? "•"}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{t(page.labelKey)}</span>
+        {page.id === "live" && (
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-emerald-400" />
+        )}
+      </button>
+    );
+  };
 
   return (
     <div className="min-h-screen md:flex">
       {/* mobile top bar */}
       <div className="sticky top-0 z-30 flex items-center justify-between border-b border-zinc-800 px-4 py-3 md:hidden">
-        <div className="text-base font-bold">
-          ⚡ LLMSwitch <span className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</span>
+        <div className="flex items-center gap-2 text-base font-bold">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-yellow-600 text-sm">
+            ⚡
+          </span>
+          LLMSwitch{" "}
+          <span className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</span>
         </div>
         <div className="flex items-center gap-1">
           <LanguageToggle />
@@ -287,9 +354,14 @@ function AppInner() {
         }`}
       >
         <div className="flex items-center justify-between px-4 py-4">
-          <div className="text-lg font-bold">
-            ⚡ LLMSwitch
-            <div className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</div>
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-yellow-600 text-lg shadow-lg shadow-amber-950/50">
+              ⚡
+            </span>
+            <div className="text-lg font-bold leading-tight">
+              LLMSwitch
+              <div className="text-xs font-normal text-zinc-500">{t("common.aiGateway")}</div>
+            </div>
           </div>
           <button
             onClick={() => setMobileNav(false)}
@@ -301,24 +373,58 @@ function AppInner() {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 pb-4">
-          <div className="flex flex-col gap-0.5">{PRIMARY.map(navItem)}</div>
+          <input
+            value={navQuery}
+            onChange={(e) => setNavQuery(e.target.value)}
+            placeholder={t("nav.searchPages")}
+            className="mb-3 w-full rounded-lg border border-zinc-800 bg-zinc-900/80 px-3 py-2 text-sm outline-none placeholder:text-zinc-600 focus:border-amber-700/60"
+          />
+          {navQuery.trim() ? (
+            <div className="flex flex-col gap-0.5">
+              {ALL_PAGES.filter((p) => {
+                const q = navQuery.trim().toLowerCase();
+                return (
+                  t(p.labelKey).toLowerCase().includes(q) || p.id.toLowerCase().includes(q)
+                );
+              }).map(navItem)}
+              {ALL_PAGES.every(
+                (p) =>
+                  !t(p.labelKey).toLowerCase().includes(navQuery.trim().toLowerCase()) &&
+                  !p.id.toLowerCase().includes(navQuery.trim().toLowerCase()),
+              ) && <p className="px-3 py-2 text-sm text-zinc-600">—</p>}
+            </div>
+          ) : (
+            <>
+              <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                {t("nav.main")}
+              </p>
+              <div className="flex flex-col gap-0.5">{NAV_MAIN.map(navItem)}</div>
 
-          <div className="mt-5 border-t border-zinc-800/70 pt-3">
-            <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-              {t("nav.advanced")}
-            </p>
-            {ADVANCED_SECTIONS.map((sec) => (
-              <div key={sec.id} className="mb-1">
-                <button
-                  onClick={() => toggle(sec.id)}
-                  className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
-                >
-                  <span>{t(sec.labelKey)}</span>
-                  <span>{open[sec.id] ? "▾" : "▸"}</span>
-                </button>
-                {open[sec.id] && <div className="flex flex-col gap-0.5">{sec.pages.map(navItem)}</div>}
+              <div className="mt-5 border-t border-zinc-800/70 pt-3">
+                {NAV_GROUPS.map((sec) => (
+                  <div key={sec.id} className="mb-1">
+                    <button
+                      onClick={() => toggle(sec.id)}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500 transition hover:text-zinc-300"
+                    >
+                      <span>{t(sec.labelKey)}</span>
+                      <span
+                        className={`inline-block transition-transform duration-200 ${open[sec.id] ? "rotate-90" : ""}`}
+                      >
+                        ▸
+                      </span>
+                    </button>
+                    {open[sec.id] && (
+                      <div className="flex flex-col gap-0.5">{sec.pages.map(navItem)}</div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            </>
+          )}
+
+          <div className="mt-4 border-t border-zinc-800/70 pt-3">
+            <div className="flex flex-col gap-0.5">{NAV_BOTTOM.map(navItem)}</div>
           </div>
         </nav>
 
