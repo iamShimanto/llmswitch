@@ -1,7 +1,17 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 
 export interface ApiKeyRecord {
   id: string;
@@ -118,9 +128,29 @@ CREATE TABLE IF NOT EXISTS prompt_cache (
 /** API keys are stored as scrypt hashes — the raw key is shown once at creation. */
 export class Store {
   private db: DatabaseSync;
+  private dataDir: string;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
+    this.dataDir = dataDir;
+    // A staged restore (POST /api/backups/:name/restore) is applied here,
+    // before the database is opened: the pending file becomes the live
+    // DB and the previous DB is kept as .pre-restore-<ts> for rollback.
+    const pending = join(dataDir, "llmswitch.db.restore-pending");
+    if (existsSync(pending)) {
+      const live = join(dataDir, "llmswitch.db");
+      try {
+        if (existsSync(live)) renameSync(live, join(dataDir, `llmswitch.db.pre-restore-${Date.now()}`));
+        for (const suffix of ["-wal", "-shm"]) {
+          const f = `${live}${suffix}`;
+          if (existsSync(f)) rmSync(f, { force: true });
+        }
+        renameSync(pending, live);
+        console.log("[llmswitch] staged database restore applied");
+      } catch (err) {
+        console.error(`[llmswitch] failed to apply staged restore: ${(err as Error).message}`);
+      }
+    }
     this.db = new DatabaseSync(join(dataDir, "llmswitch.db"));
     this.db.exec(SCHEMA);
     this.migrate();
@@ -869,6 +899,88 @@ export class Store {
     return n;
   }
 
+  // ---- Database backups ----
+
+  private backupDir(): string {
+    const dir = join(this.dataDir, "backups");
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  /** Strict backup file-name check (no path traversal). */
+  static backupNameOk(name: string): boolean {
+    return /^llmswitch-backup-[\w.-]+\.db$/.test(name) && !name.includes("..");
+  }
+
+  createBackup(now = new Date()): { name: string; sizeBytes: number; createdAt: number } {
+    const stamp = now.toISOString().replace(/[:.]/g, "-");
+    const name = `llmswitch-backup-${stamp}.db`;
+    const target = join(this.backupDir(), name);
+    // VACUUM INTO writes a consistent single-file copy (fails if the
+    // target exists, hence the timestamped name).
+    this.db.exec(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
+    const st = statSync(target);
+    return { name, sizeBytes: st.size, createdAt: Math.floor(st.mtimeMs) };
+  }
+
+  listBackups(): Array<{ name: string; sizeBytes: number; createdAt: number }> {
+    const dir = this.backupDir();
+    return readdirSync(dir)
+      .filter((n) => Store.backupNameOk(n))
+      .map((n) => {
+        const st = statSync(join(dir, n));
+        return { name: n, sizeBytes: st.size, createdAt: Math.floor(st.mtimeMs) };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  backupPath(name: string): string | null {
+    if (!Store.backupNameOk(name)) return null;
+    const p = join(this.backupDir(), name);
+    return existsSync(p) ? p : null;
+  }
+
+  deleteBackup(name: string): boolean {
+    const p = this.backupPath(name);
+    if (!p) return false;
+    rmSync(p, { force: true });
+    return true;
+  }
+
+  /** Keep only the newest `keep` backups; returns how many were pruned. */
+  pruneBackups(keep: number): number {
+    const all = this.listBackups();
+    let n = 0;
+    for (const b of all.slice(Math.max(0, keep))) {
+      if (this.deleteBackup(b.name)) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Stage a backup for restore: it is validated (SQLite header + schema
+   * probe) and copied to llmswitch.db.restore-pending; the Store
+   * constructor swaps it in on the next process start.
+   */
+  stageRestore(name: string): { ok: boolean; error?: string } {
+    const p = this.backupPath(name);
+    if (!p) return { ok: false, error: "backup not found" };
+    let probe: DatabaseSync | null = null;
+    try {
+      probe = new DatabaseSync(p, { readOnly: true });
+      const tables = probe
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('api_keys','settings','usage_log')")
+        .all() as Array<{ name: string }>;
+      if (tables.length < 3) return { ok: false, error: "file is not an LLMSwitch database" };
+    } catch {
+      return { ok: false, error: "file is not a valid SQLite database" };
+    } finally {
+      probe?.close();
+    }
+    copyFileSync(p, join(this.dataDir, "llmswitch.db.restore-pending"));
+    return { ok: true };
+  }
+
   // ---- Prompt cache persistence (cache v2 write-through backing) ----
 
   cacheLoadAll(): Array<{ key: string; response: string; expiresAt: number }> {
@@ -1032,6 +1144,8 @@ export function memoryStore(): Store {
   const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA);
   (s as any).db = db;
+  // Backups stage files on disk even for a memory DB — give it a scratch dir.
+  (s as any).dataDir = mkdtempSync(join(tmpdir(), "llmswitch-memstore-"));
   return s;
 }
 
