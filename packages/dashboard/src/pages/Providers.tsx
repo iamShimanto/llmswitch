@@ -150,7 +150,7 @@ function ProviderDetail({
     setError("");
     setTestResult("");
     try {
-      const r = await api.providerTest(p.id, p.defaultModel);
+      const r = await api.testModel(p.id, p.defaultModel);
       setTestResult(
         r.ok ? `✓ ${(r.text ?? "").slice(0, 200)} (${r.latencyMs} ms)` : `✗ ${r.error ?? "failed"}`,
       );
@@ -587,7 +587,7 @@ function DirectoryCard({
     e.stopPropagation();
     setTestState({ running: true });
     try {
-      const r = await api.providerTest(c.id, c.defaultModel);
+      const r = await api.testModel(c.id, c.defaultModel);
       setTestState({ running: false, ok: r.ok, msg: r.ok ? `✓ ${r.latencyMs} ms` : `✗ ${r.error ?? "failed"}` });
     } catch (err) {
       setTestState({ running: false, ok: false, msg: `✗ ${String(err)}` });
