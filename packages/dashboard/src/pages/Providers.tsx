@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, type CatalogEntry, type OAuthStatus, type ProviderInfo } from "../api";
+import { api, getAdminKey, getSession, type CatalogEntry, type OAuthStatus, type ProviderInfo } from "../api";
 
 function ProviderDetail({
   p,
@@ -270,8 +270,24 @@ function ProviderDetail({
             )
           ) : p.authType === "cookie" ? (
             <>
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => {
+                    const tok = getSession() || getAdminKey();
+                    window.open(`/proxy/${p.id}/${tok ? `?s=${encodeURIComponent(tok)}` : ""}`, "_blank");
+                  }}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
+                >
+                  Open login window
+                </button>
+                <p className="max-w-md text-xs text-zinc-500">
+                  The site opens through this gateway — just log in there and your session
+                  connects automatically. Then come back and press Test. (Some sites block
+                  proxied logins; then use the paste box below.)
+                </p>
+              </div>
               <p className="mb-3 text-sm text-zinc-400">
-                This provider uses your logged-in browser session. Open the site in your
+                Or paste cookies manually: open the site in your
                 browser while logged in, copy the <b>Cookie</b> request header (DevTools →
                 Network → any request → Cookie) or use a cookie-export extension, and paste
                 it here. Unofficial sessions can break when the site changes.

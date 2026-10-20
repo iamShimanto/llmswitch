@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body { font-family: system-ui, sans-serif; width: 320px; margin: 0; padding: 14px; background: #171412; color: #ece7df; }
+      h1 { font-size: 15px; margin: 0 0 4px; }
+      p.hint { font-size: 12px; color: #a89f92; margin: 0 0 10px; }
+      label { display: block; font-size: 12px; margin: 10px 0 4px; color: #c9c0b2; }
+      input, select { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 8px; border: 1px solid #4a4238; background: #26211c; color: #ece7df; font-size: 13px; }
+      button { width: 100%; margin-top: 14px; padding: 10px; border: 0; border-radius: 8px; background: #b88a44; color: #171412; font-weight: 600; font-size: 14px; cursor: pointer; }
+      button:disabled { opacity: 0.5; }
+      #status { margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
+      .ok { color: #7bd88f; }
+      .err { color: #f08a80; }
+    </style>
+  </head>
+  <body>
+    <h1>⚡ LLMSwitch Connect</h1>
+    <p class="hint">Log in to the provider's site in this browser first, then connect it to your gateway with one click. Cookies go only to YOUR gateway.</p>
+    <label for="gateway">Gateway URL</label>
+    <input id="gateway" placeholder="https://llmswitch.shimantosarkar.dev" />
+    <label for="token">Admin key or dashboard session token</label>
+    <input id="token" type="password" placeholder="adm-… or session token" />
+    <label for="provider">Provider</label>
+    <select id="provider"></select>
+    <button id="connect">Connect</button>
+    <div id="status"></div>
+    <script src="popup.js"></script>
+  </body>
+</html>

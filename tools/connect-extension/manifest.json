@@ -1,0 +1,1 @@
+{"action":{"default_popup":"popup.html","default_title":"LLMSwitch Connect"},"description":"One-click connect for LLMSwitch web-session providers: sends your logged-in site cookies to your own gateway.","host_permissions":["https://*/*","http://*/*"],"manifest_version":3,"name":"LLMSwitch Connect","permissions":["cookies","storage"],"version":"1.0.0"}
