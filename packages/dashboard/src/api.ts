@@ -266,6 +266,17 @@ export interface QuotaProvider {
   calls: number;
   errors: number;
   telemetry: { remaining: number | null; limit: number | null; resetAt: number | null } | null;
+  /** OmniRoute-style live quota groups (Antigravity retrieveUserQuota). */
+  accountQuotas?: Array<{
+    accountId: string | null;
+    label: string;
+    buckets: Array<{
+      model: string;
+      remainingPct: number | null;
+      resetAt: string | null;
+      unlimited: boolean;
+    }>;
+  }>;
 }
 
 export interface LiveStats {
