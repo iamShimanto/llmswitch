@@ -2,6 +2,7 @@ import { executeProvider, type ExecuteResult } from "../executor/http.js";
 import { executeAntigravityChat } from "../executor/antigravity.js";
 import { executeClaudeOAuthChat } from "../executor/claudeOAuth.js";
 import { executeCodexOAuthChat } from "../executor/codexOAuth.js";
+import { executeMuseCodeChat } from "../executor/museCode.js";
 import { executeCursorChat } from "../executor/cursor.js";
 import { executeCopilotChat } from "../executor/copilot.js";
 import { executeKiroChat } from "../executor/kiro.js";
@@ -120,6 +121,9 @@ async function executeWithRotation(
   }
   if (provider.id === "codex") {
     return executeCodexOAuthChat(provider, model, body, fetchFn, timeoutMs);
+  }
+  if (provider.id === "muse-code") {
+    return executeMuseCodeChat(provider, model, body, fetchFn, timeoutMs);
   }
   if (provider.id === "cursor") {
     return executeCursorChat(provider, model, body, fetchFn, timeoutMs);
