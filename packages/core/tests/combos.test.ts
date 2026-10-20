@@ -482,3 +482,44 @@ describe("router combo v2 behaviors", () => {
     expect(injected).toBe(false);
   });
 });
+
+describe("auto catalog provider diversity", () => {
+  const mk = (id: string, models: string[], costTier: number): ResolvedProvider =>
+    ({
+      id,
+      name: id,
+      baseUrl: `https://${id}.example/v1`,
+      wireFormat: "openai",
+      models,
+      defaultModel: models[0],
+      costTier,
+      apiKey: "k",
+      allKeys: ["k"],
+    }) as ResolvedProvider;
+
+  it("caps any single provider at 3 of the 6 candidate slots", () => {
+    const big = mk(
+      "big",
+      ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-chat", "gpt-5-pro", "gpt-5-turbo"],
+      3,
+    );
+    const small = mk("small", ["llama-flash-8b", "qwen-flash", "gemini-flash-lite"], 3);
+    const targets = buildAutoTargets(autoTemplate("auto/best-chat")!, [big, small]);
+    const fromBig = targets.filter((t) => t.model.startsWith("big:")).length;
+    const fromSmall = targets.filter((t) => t.model.startsWith("small:")).length;
+    expect(fromBig).toBeLessThanOrEqual(3);
+    expect(fromSmall).toBeGreaterThanOrEqual(2);
+    expect(targets.length).toBe(6);
+  });
+
+  it("backfills from the dominant provider when alternatives run out", () => {
+    const big = mk(
+      "big",
+      ["gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-chat", "gpt-5-pro", "gpt-5-turbo"],
+      3,
+    );
+    const targets = buildAutoTargets(autoTemplate("auto/best-chat")!, [big]);
+    expect(targets.length).toBe(6);
+    expect(targets.every((t) => t.model.startsWith("big:"))).toBe(true);
+  });
+});
