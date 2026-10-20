@@ -94,50 +94,84 @@ export function buildAutoTargets(
   providers: ResolvedProvider[],
   limit = 6,
 ): ComboTarget[] {
-  const scored: Array<{ model: string; weight: number }> = [];
+  /** Score one model for a category; null = not eligible for it. */
+  const scoreFor = (p: ResolvedProvider, m: string, category: AutoCategory): number | null => {
+    if (RE.weak.test(m)) return null;
+    const caps = classifyModel(m);
+    let score = 0;
+    // category fit (chat accepts everything)
+    if (category === "coding") {
+      if (!caps.coding) return null;
+      score += 6;
+    } else if (category === "reasoning") {
+      if (!caps.reasoning) return null;
+      score += 6;
+    } else if (category === "vision") {
+      if (!caps.vision) return null;
+      score += 6;
+    } else if (category === "fast") {
+      score += caps.fast ? 6 : 2;
+    } else {
+      score += 3;
+      if (caps.coding) score += 1;
+      if (caps.reasoning) score += 1;
+    }
+    // tier fit (costTier: 1 cheapest … 5 premium)
+    const tier = p.costTier ?? 3;
+    if (template.tier === "free") {
+      if (tier > 2 && p.authType !== "none") return null;
+      score += 6 - tier;
+      if (m.includes(":free") || m.includes("free")) score += 2;
+    } else if (template.tier === "premium") {
+      score += tier;
+      if (RE.flagship.test(m)) score += 3;
+    } else {
+      score += 3 - Math.abs(tier - 3);
+    }
+    if (template.id === "auto/subscription") {
+      if (p.authType === "oauth" || p.authType === "cookie") score += 5;
+      else score -= 2;
+    }
+    if (m === p.defaultModel) score += 1;
+    return score;
+  };
+
+  const primary: Array<{ model: string; weight: number }> = [];
   for (const p of providers) {
     for (const m of p.models) {
-      if (RE.weak.test(m)) continue;
-      const caps = classifyModel(m);
-      let score = 0;
-      // category fit (chat accepts everything)
-      if (template.category === "coding") {
-        if (!caps.coding) continue;
-        score += 6;
-      } else if (template.category === "reasoning") {
-        if (!caps.reasoning) continue;
-        score += 6;
-      } else if (template.category === "vision") {
-        if (!caps.vision) continue;
-        score += 6;
-      } else if (template.category === "fast") {
-        score += caps.fast ? 6 : 2;
-      } else {
-        score += 3;
-        if (caps.coding) score += 1;
-        if (caps.reasoning) score += 1;
-      }
-      // tier fit (costTier: 1 cheapest … 5 premium)
-      const tier = p.costTier ?? 3;
-      if (template.tier === "free") {
-        if (tier > 2 && p.authType !== "none") continue;
-        score += 6 - tier;
-        if (m.includes(":free") || m.includes("free")) score += 2;
-      } else if (template.tier === "premium") {
-        score += tier;
-        if (RE.flagship.test(m)) score += 3;
-      } else {
-        score += 3 - Math.abs(tier - 3);
-      }
-      if (template.id === "auto/subscription") {
-        if (p.authType === "oauth" || p.authType === "cookie") score += 5;
-        else score -= 2;
-      }
-      if (m === p.defaultModel) score += 1;
-      scored.push({ model: `${p.id}:${m}`, weight: Math.max(1, Math.round(score)) });
+      const s = scoreFor(p, m, template.category);
+      if (s !== null) primary.push({ model: `${p.id}:${m}`, weight: Math.max(1, Math.round(s)) });
     }
   }
-  scored.sort((a, b) => b.weight - a.weight);
+  primary.sort((a, b) => b.weight - a.weight);
+
+  // Category backfill (coding/reasoning): when too few specialist-named
+  // models are connected, strong GENERAL models fill the remaining slots
+  // at demoted weight — frontier chat models (Claude, Gemini, GPT) are
+  // genuinely excellent at coding and reasoning even though their names
+  // carry no "coder"/"thinking" marker. Without this, auto/best-coding
+  // was 0/6 live: every name-matched candidate sat behind one provider's
+  // sign-in wall while the user's best models were never candidates.
+  let scored = primary;
+  if (
+    primary.length < limit &&
+    (template.category === "coding" || template.category === "reasoning")
+  ) {
+    const have = new Set(primary.map((t) => t.model));
+    const backfill: Array<{ model: string; weight: number }> = [];
+    for (const p of providers) {
+      for (const m of p.models) {
+        const key = `${p.id}:${m}`;
+        if (have.has(key)) continue;
+        const s = scoreFor(p, m, "chat");
+        if (s !== null) {
+          backfill.push({ model: key, weight: Math.max(1, Math.round(s * 0.8)) });
+        }
+      }
+    }
+    backfill.sort((a, b) => b.weight - a.weight);
+    scored = [...primary, ...backfill];
+  }
   // Provider diversity: cap any single provider at 3 of the slots. A
   // monoculture candidate list collapses when that one provider has a
   // bad day (observed live: Kilo's catalog filled all 6 slots of
