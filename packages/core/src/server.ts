@@ -107,8 +107,21 @@ export function createServer(
       env[k.slice("provider_key:".length)] = v;
     }
     const fresh = registry.connected(env);
+    // Union in models the user discovered/imported earlier — they persist
+    // in the store (discovered_models:<id>) across restarts and refreshes.
+    for (const p of fresh) {
+      const raw = store.getSetting(`discovered_models:${p.id}`);
+      if (!raw) continue;
+      try {
+        const extra = JSON.parse(raw) as string[];
+        p.models = [...new Set([...p.models, ...extra])];
+      } catch {
+        /* corrupted setting: ignore */
+      }
+    }
     providers.splice(0, providers.length, ...fresh);
   };
+  refreshProviders();
   registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry, dashboardSessions: sessions });
 
   if (hasDashboard) {

@@ -1481,6 +1481,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     const connectedIds = new Set(providers.map((p) => p.id));
+    const liveById = new Map(providers.map((p) => [p.id, p]));
     res.json(
       deps.registry.all().map((d) => ({
         id: d.id,
@@ -1488,7 +1489,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         wireFormat: d.wireFormat,
         authType: d.authType ?? "api-key",
         envKey: d.envKey,
-        models: d.models,
+        // Live providers carry discovered/imported models merged in.
+        models: liveById.get(d.id)?.models ?? d.models,
         defaultModel: d.defaultModel,
         connected: connectedIds.has(d.id),
         disabled: Boolean(d.disabled),
@@ -1805,7 +1807,17 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         models = ((await r.json()) as any).data?.map((m: any) => m.id) ?? [];
       }
-      res.json({ provider: p.id, models: models.filter(Boolean) });
+      const found = models.filter(Boolean);
+      // Persist discovered models: previously they lived only in the
+      // dashboard's React state / the in-memory provider object, so a page
+      // refresh or gateway restart lost them. They are stored per provider
+      // and unioned back in on every provider refresh (see server.ts).
+      const prev = JSON.parse(store.getSetting(`discovered_models:${p.id}`) ?? "[]") as string[];
+      const stored = [...new Set([...prev, ...found])];
+      store.setSetting(`discovered_models:${p.id}`, JSON.stringify(stored));
+      p.models = [...new Set([...p.models, ...found])];
+      store.audit("provider.models_discovered", p.id, `${found.length} models`);
+      res.json({ provider: p.id, models: p.models });
     } catch (err) {
       res.status(502).json({
         error: { message: `discovery failed: ${err instanceof Error ? err.message : String(err)}`, type: "upstream_error" },
@@ -1827,6 +1839,11 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     def.models = [...new Set([...def.models, ...models])];
+    const prev = JSON.parse(store.getSetting(`discovered_models:${def.id}`) ?? "[]") as string[];
+    store.setSetting(
+      `discovered_models:${def.id}`,
+      JSON.stringify([...new Set([...prev, ...models])]),
+    );
     res.json({ provider: def.id, models: def.models });
   });
 
