@@ -98,7 +98,7 @@ describe("router cache integration", () => {
     expect(calls).toBe(2);
   });
 
-  it("streaming requests are never cached", async () => {
+  it("streaming requests are cached in v2 (assembled + replayed)", async () => {
     let calls = 0;
     const fetchFn = (async () => {
       calls++;
@@ -111,10 +111,14 @@ describe("router cache integration", () => {
     const router = createRouter([prov("a")], { cache: new PromptCache() });
     const r1 = await router.route({ ...body, stream: true }, { fetchFn });
     expect(r1.cached).not.toBe(true);
-    // drain
+    // drain — the tap assembles the completed stream into the cache
     for await (const _ of r1.stream!) { /* noop */ }
     const r2 = await router.route({ ...body, stream: true }, { fetchFn });
-    expect(r2.cached).not.toBe(true);
-    expect(calls).toBe(2);
+    expect(r2.cached).toBe(true);
+    expect(calls).toBe(1);
+    // the replayed stream is consumable
+    let replayed = 0;
+    for await (const _ of r2.stream!) replayed++;
+    expect(replayed).toBeGreaterThan(0);
   });
 });

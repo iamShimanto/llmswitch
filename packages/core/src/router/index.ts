@@ -24,6 +24,7 @@ import type {
 } from "../providers/types.js";
 import { CooldownTracker } from "../quota/limiter.js";
 import { PromptCache } from "../cache/index.js";
+import { replayStream, tapStream } from "../cache/stream.js";
 import { QuotaTelemetry, type QuotaInfo } from "../quota/telemetry.js";
 import { orderComboTargets, type RouterCombo } from "../combos/index.js";
 import { autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
@@ -51,6 +52,9 @@ export interface RouteOptions {
   onEvent?: (e: RouterEvent) => void;
   /** bypass prompt cache for this request */
   bypassCache?: boolean;
+  /** cache isolation namespace (gateway API key id) — cached responses are
+   *  only shared between requests carrying the same namespace */
+  cacheNamespace?: string;
   /** internal: router-combo nesting depth (recursion guard) */
   comboDepth?: number;
   /** pin execution to one provider account (combo target account pin) */
@@ -573,21 +577,30 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
           }
         : body;
 
-      // caching (non-streaming only)
-      const useCache = body.stream !== true && !opts.bypassCache;
-      if (useCache && cache) {
-        const key = cache.key(provider.id, model, attemptBody);
-        const hit = cache.get(key);
+      // caching v2: namespaced per gateway key; streaming requests are
+      // served from cache too (stored response replayed as chunks)
+      const useCache = !opts.bypassCache;
+      const ns = opts.cacheNamespace ?? "";
+      const cacheKey = useCache && cache ? cache.key(provider.id, model, attemptBody, ns) : null;
+      const semScope = useCache && semantic ? SemanticCache.scopeFor(ns, provider.id, model, attemptBody.messages as never) : null;
+      if (cacheKey && cache) {
+        const hit = cache.get(cacheKey);
         if (hit) {
           record(provider.id, Date.now() - started, false);
+          if (body.stream === true) {
+            return { stream: replayStream(hit), providerId: provider.id, model, latencyMs: 0, cached: true };
+          }
           return { response: hit, providerId: provider.id, model, latencyMs: 0, cached: true };
         }
       }
-      // semantic cache: paraphrase match (opt-in, independent of exact cache)
-      if (useCache && semantic) {
-        const sem = await semantic.find(SemanticCache.promptText(attemptBody.messages));
+      // semantic cache: paraphrase match inside the same scope only
+      if (semScope && semantic) {
+        const sem = await semantic.find(semScope, SemanticCache.promptText(attemptBody.messages as never));
         if (sem) {
           record(provider.id, Date.now() - started, false);
+          if (body.stream === true) {
+            return { stream: replayStream(sem.response), providerId: provider.id, model, latencyMs: 0, cached: true };
+          }
           return { response: sem.response, providerId: provider.id, model, latencyMs: 0, cached: true };
         }
       }
@@ -615,12 +628,21 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
         if (result.quota) telemetry.record(provider.id, result.quota);
         if (opts.sessionId) affinity.set(opts.sessionId, provider.id);
         if (strategy === "fill-first") setStickyProvider(provider.id);
-        // store non-streaming successes in caches
-        if (body.stream !== true && !opts.bypassCache && result.response) {
-          if (cache) cache.set(cache.key(provider.id, model, attemptBody), result.response);
-          if (semantic) {
-            void semantic.add(SemanticCache.promptText(attemptBody.messages), result.response);
+        // store successes in the caches. Streaming responses are tapped:
+        // chunks pass through untouched and the assembled response is
+        // stored when the stream completes (a broken stream stores none).
+        if (!opts.bypassCache && result.response) {
+          if (cache && cacheKey) cache.set(cacheKey, result.response);
+          if (semantic && semScope) {
+            void semantic.add(semScope, SemanticCache.promptText(attemptBody.messages as never), result.response);
           }
+        }
+        if (!opts.bypassCache && result.stream && (cacheKey || semScope)) {
+          const promptText = SemanticCache.promptText(attemptBody.messages as never);
+          result.stream = tapStream(result.stream, (assembled) => {
+            if (cache && cacheKey) cache.set(cacheKey, assembled);
+            if (semantic && semScope) void semantic.add(semScope, promptText, assembled);
+          });
         }
         return result;
       } catch (err) {

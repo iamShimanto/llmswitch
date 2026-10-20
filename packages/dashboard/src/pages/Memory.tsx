@@ -17,7 +17,7 @@ export default function Memory() {
   const [threshold, setThreshold] = useState("0.85");
 
   const load = () => {
-    api.cacheStats().then(setStats).catch((e) => setError(String(e)));
+    api.cacheStats().then((s) => setStats(s.exact)).catch((e) => setError(String(e)));
   };
   useEffect(load, []);
 

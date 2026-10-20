@@ -4,10 +4,16 @@ import { api } from "../api";
 import { Tabs, TabEmpty } from "../components/Tabs";
 
 interface CacheStats {
-  entries: number;
-  hits: number;
-  misses: number;
-  hitRate: number;
+  exact: {
+    entries: number;
+    hits: number;
+    misses: number;
+    hitRate: number;
+    persistent: boolean;
+    ttlMs: number;
+    maxEntries: number;
+  };
+  semantic: { entries: number; hits: number; misses: number; hitRate: number; threshold: number } | null;
 }
 
 function PromptCache() {
@@ -46,10 +52,10 @@ function PromptCache() {
 
       <div className="grid gap-4 md:grid-cols-4">
         {[
-          { label: "Entries", value: stats?.entries ?? "—" },
-          { label: "Hits", value: stats?.hits ?? "—" },
-          { label: "Misses", value: stats?.misses ?? "—" },
-          { label: "Hit rate", value: stats ? `${(stats.hitRate * 100).toFixed(1)}%` : "—" },
+          { label: "Entries", value: stats?.exact.entries ?? "—" },
+          { label: "Hits", value: stats?.exact.hits ?? "—" },
+          { label: "Misses", value: stats?.exact.misses ?? "—" },
+          { label: "Hit rate", value: stats ? `${stats.exact.hitRate.toFixed(1)}%` : "—" },
         ].map((c) => (
           <div key={c.label} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4">
             <p className="text-xs text-zinc-500">{c.label}</p>
@@ -57,9 +63,30 @@ function PromptCache() {
           </div>
         ))}
       </div>
-      <p className="mt-4 text-xs text-zinc-500">
-        Exact-match prompt cache. Entries expire after 1h (max 1000 entries).
+      <p className="mt-4 text-xs leading-relaxed text-zinc-500">
+        Exact-match prompt cache v2: full-parameter keys (temperature, top_p, stop, seed,
+        tools…), isolated per gateway API key, true LRU eviction, and streaming responses are
+        cached too. Entries expire after{" "}
+        {stats ? `${Math.round(stats.exact.ttlMs / 60000)} min` : "60 min"} (max{" "}
+        {stats?.exact.maxEntries.toLocaleString() ?? "2,000"} entries) and are{" "}
+        {stats?.exact.persistent ? (
+          <span className="text-emerald-400">persisted in SQLite — they survive restarts and deploys</span>
+        ) : (
+          "kept in memory only"
+        )}
+        .
       </p>
+      {stats?.semantic && (
+        <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+          <h3 className="mb-1 font-semibold">Semantic cache (active)</h3>
+          <p className="text-sm text-zinc-400">
+            {stats.semantic.entries} entries · {stats.semantic.hits} hits · {stats.semantic.misses}{" "}
+            misses · {stats.semantic.hitRate.toFixed(1)}% hit rate · threshold{" "}
+            {stats.semantic.threshold}. Matches are scoped per API key + provider + model +
+            system prompt.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

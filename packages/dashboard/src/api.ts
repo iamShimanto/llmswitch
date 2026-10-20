@@ -145,7 +145,19 @@ export const api = {
   revokeKey: (id: string) => req<{ revoked: boolean }>(`/api/keys/${id}`, { method: "DELETE" }),
   setBudget: (id: string, budgetUsd: number | null) =>
     req(`/api/keys/${id}/budget`, { method: "PUT", body: JSON.stringify({ budgetUsd }) }),
-  cacheStats: () => req<{ entries: number; hits: number; misses: number; hitRate: number }>("/api/cache/stats"),
+  cacheStats: () =>
+    req<{
+      exact: {
+        entries: number;
+        hits: number;
+        misses: number;
+        hitRate: number;
+        persistent: boolean;
+        ttlMs: number;
+        maxEntries: number;
+      };
+      semantic: { entries: number; hits: number; misses: number; hitRate: number; threshold: number } | null;
+    }>("/api/cache/stats"),
   clearCache: () => req<{ cleared: boolean }>("/api/cache", { method: "DELETE" }),
   compressionPreview: (text: string, mode = "stacked") =>
     req<{ text: string; stats: { savedPct: number; estTokensBefore: number; estTokensAfter: number } }>(

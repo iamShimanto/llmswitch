@@ -73,6 +73,7 @@ export interface RouteDeps {
   store: Store;
   router: Router;
   cache: PromptCache;
+  semantic?: import("../cache/semantic.js").SemanticCache;
   alerter: Alerter;
   inspector: Inspector;
   routingLog: RoutingEventLog;
@@ -224,7 +225,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           );
         }
       };
-      const result = await router.route(body, { strategy, sessionId, bypassCache, onEvent });
+      const result = await router.route(body, {
+        strategy,
+        sessionId,
+        bypassCache,
+        onEvent,
+        cacheNamespace: req.apiKey?.id ?? "",
+      });
       routingLog.record({
         type: "routed",
         providerId: result.providerId,
@@ -352,7 +359,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const strategy: StrategyName = effStrategy();
     const msgId = `msg_${randomBytes(12).toString("hex")}`;
     try {
-      const result = await router.route(chatBody, { strategy });
+      const result = await router.route(chatBody, { strategy, cacheNamespace: req.apiKey?.id ?? "" });
       if (result.stream) {
         res.writeHead(200, {
           "content-type": "text/event-stream",
@@ -426,7 +433,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     });
     const strategy: StrategyName = effStrategy();
     try {
-      const result = await router.route(chatBody, { strategy });
+      const result = await router.route(chatBody, { strategy, cacheNamespace: req.apiKey?.id ?? "" });
       if (result.stream) {
         const respId = `resp_${randomBytes(12).toString("hex")}`;
         res.writeHead(200, {
@@ -2299,11 +2306,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ---- Prompt cache ----
   app.get("/api/cache/stats", (_req: Request, res: Response) => {
-    res.json(cache.stats());
+    res.json({ exact: cache.stats(), semantic: deps.semantic?.stats() ?? null });
   });
 
   app.delete("/api/cache", (_req: Request, res: Response) => {
     cache.clear();
+    deps.semantic?.clear();
     store.audit("cache.cleared");
     res.json({ cleared: true });
   });
