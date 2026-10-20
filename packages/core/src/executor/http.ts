@@ -132,6 +132,13 @@ export async function executeProvider(
 ): Promise<ExecuteResult> {
   const started = Date.now();
   const wire = buildWireCall(provider, model, body);
+  // Dashboard Param Filters: strip provider-rejected params (e.g. NVIDIA
+  // NIM rejects `thinking`) from the outgoing payload.
+  if (provider.blockedParams?.length && wire.body && typeof wire.body === "object") {
+    for (const k of provider.blockedParams) {
+      delete (wire.body as Record<string, unknown>)[k];
+    }
+  }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 

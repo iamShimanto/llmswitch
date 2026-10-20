@@ -117,8 +117,10 @@ export function createServer(
     cache,
     semantic,
     accounts: {
-      strategy: () => {
-        const v = store.getSetting("account_strategy");
+      strategy: (providerId: string) => {
+        // Per-provider override wins over the global account strategy.
+        const per = store.getSetting(`account_strategy:${providerId}`);
+        const v = per ?? store.getSetting("account_strategy");
         return v === "least-used" || v === "priority" || v === "random" ? v : "round-robin";
       },
       stats: (providerId) =>
@@ -201,12 +203,50 @@ export function createServer(
         /* corrupted setting: ignore */
       }
     }
+    // Custom models the user added by hand (dashboard Custom Models):
+    // unioned like discovered models, before hidden filtering.
+    for (const p of fresh) {
+      const raw = store.getSetting(`custom_models:${p.id}`);
+      if (!raw) continue;
+      try {
+        const custom = JSON.parse(raw) as Array<{ id: string }>;
+        p.models = [...new Set([...p.models, ...custom.map((c) => c.id)])];
+      } catch {
+        /* corrupted setting: ignore */
+      }
+    }
+    // Hidden models (dashboard eye toggle): removed from routing; the
+    // catalog re-adds them for display from the same setting.
+    for (const p of fresh) {
+      const raw = store.getSetting(`hidden_models:${p.id}`);
+      if (!raw) continue;
+      try {
+        const hidden = new Set(JSON.parse(raw) as string[]);
+        if (hidden.size > 0) {
+          p.models = p.models.filter((m) => !hidden.has(m));
+          if (hidden.has(p.defaultModel) && p.models.length > 0) {
+            p.defaultModel = p.models[0]!;
+          }
+        }
+      } catch {
+        /* corrupted setting: ignore */
+      }
+    }
+    // Param Filters (dashboard): params stripped per provider at send time.
+    for (const p of fresh) {
+      const raw = store.getSetting(`param_block:${p.id}`);
+      if (raw) {
+        p.blockedParams = raw.split(",").map((x) => x.trim()).filter(Boolean);
+      }
+    }
     // User-chosen default model per provider (dashboard model rows).
     for (const p of fresh) {
       const dm = store.getSetting(`default_model:${p.id}`);
       if (dm && p.models.includes(dm)) p.defaultModel = dm;
     }
-    providers.splice(0, providers.length, ...fresh);
+    // Providers the user switched off in the dashboard leave rotation.
+    const active = fresh.filter((p) => store.getSetting(`provider_off:${p.id}`) !== "1");
+    providers.splice(0, providers.length, ...active);
   };
   refreshProviders();
   // Persist every recorded request to the DB-backed request log

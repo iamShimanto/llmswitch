@@ -106,7 +106,7 @@ export interface RouterOptions {
 
 /** Multi-account plumbing supplied by the server (backed by the store). */
 export interface AccountHooks {
-  strategy: () => AccountStrategy;
+  strategy: (providerId: string) => AccountStrategy;
   stats: (providerId: string) => Array<{ id: string; calls: number }>;
   record: (accountId: string, ok: boolean, error?: string) => void;
 }
@@ -221,7 +221,7 @@ async function executeWithRotation(
   hooks?: AccountHooks,
   forceAccountId?: string,
 ): Promise<ExecuteResult> {
-  const accountStrategy = hooks?.strategy() ?? "round-robin";
+  const accountStrategy = hooks?.strategy(provider.id) ?? "round-robin";
   const sessionAccounts = (provider.accounts ?? []).filter((a) => a.kind === "session");
   if (forceAccountId && sessionAccounts.some((a) => a.id === forceAccountId)) {
     // Pinned session account: try ONLY that account; its failure is final

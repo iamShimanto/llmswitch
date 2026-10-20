@@ -1629,20 +1629,46 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     const connectedIds = new Set(providers.map((p) => p.id));
     const liveById = new Map(providers.map((p) => [p.id, p]));
+    const parseList = (raw: string | null): string[] => {
+      try {
+        return raw ? (JSON.parse(raw) as string[]) : [];
+      } catch {
+        return [];
+      }
+    };
     res.json(
-      deps.registry.all().map((d) => ({
-        id: d.id,
-        name: d.name,
-        wireFormat: d.wireFormat,
-        authType: d.authType ?? "api-key",
-        envKey: d.envKey,
-        // Live providers carry discovered/imported models merged in.
-        models: liveById.get(d.id)?.models ?? d.models,
-        // The resolved provider carries any user default-model override.
-        defaultModel: liveById.get(d.id)?.defaultModel ?? d.defaultModel,
-        connected: connectedIds.has(d.id),
-        disabled: Boolean(d.disabled),
-      })),
+      deps.registry.all().map((d) => {
+        // Hidden models leave routing, so re-merge them for display.
+        const hiddenModels = parseList(store.getSetting(`hidden_models:${d.id}`));
+        const liveModels = liveById.get(d.id)?.models ?? d.models;
+        const models = [...new Set([...liveModels, ...hiddenModels])];
+        let customModels: Array<{ id: string; name?: string }> = [];
+        try {
+          customModels = JSON.parse(store.getSetting(`custom_models:${d.id}`) ?? "[]") as Array<{
+            id: string;
+            name?: string;
+          }>;
+        } catch {
+          customModels = [];
+        }
+        return {
+          id: d.id,
+          name: d.name,
+          wireFormat: d.wireFormat,
+          authType: d.authType ?? "api-key",
+          envKey: d.envKey,
+          models,
+          // The resolved provider carries any user default-model override.
+          defaultModel: liveById.get(d.id)?.defaultModel ?? d.defaultModel,
+          connected: connectedIds.has(d.id),
+          disabled: Boolean(d.disabled),
+          enabled: store.getSetting(`provider_off:${d.id}`) !== "1",
+          hiddenModels,
+          customModels,
+          accountStrategy: store.getSetting(`account_strategy:${d.id}`),
+          blockedParams: store.getSetting(`param_block:${d.id}`) ?? "",
+        };
+      }),
     );
   });
 
@@ -1701,6 +1727,105 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     store.audit("provider.default_model", def.id, model);
     deps.refreshProviders?.();
     res.json({ ok: true, defaultModel: providers.find((x) => x.id === def.id)?.defaultModel ?? model });
+  });
+
+  // ---- Provider page controls (OmniRoute parity) ----
+  // Enable/disable a provider without disconnecting it.
+  app.post("/api/providers/:id/enabled", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const enabled = req.body?.enabled !== false;
+    store.setSetting(`provider_off:${def.id}`, enabled ? "" : "1");
+    store.audit(enabled ? "provider.enabled" : "provider.disabled", def.id);
+    deps.refreshProviders?.();
+    res.json({ ok: true, enabled });
+  });
+
+  // Per-provider account strategy override ("" clears back to global).
+  app.post("/api/providers/:id/account-strategy", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const v = typeof req.body?.strategy === "string" ? req.body.strategy : "";
+    if (v && !["round-robin", "least-used", "priority", "random"].includes(v)) {
+      res.status(400).json({ error: { message: "invalid strategy", type: "bad_request" } });
+      return;
+    }
+    store.setSetting(`account_strategy:${def.id}`, v);
+    store.audit("provider.account_strategy", def.id, v || "global");
+    res.json({ ok: true, accountStrategy: v || null });
+  });
+
+  // Show/hide a model (hidden models leave routing, stay visible here).
+  app.post("/api/providers/:id/models/visibility", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const model = typeof req.body?.model === "string" ? req.body.model : "";
+    const hidden = req.body?.hidden === true;
+    let list: string[] = [];
+    try {
+      list = JSON.parse(store.getSetting(`hidden_models:${def.id}`) ?? "[]") as string[];
+    } catch {
+      list = [];
+    }
+    list = hidden ? [...new Set([...list, model])] : list.filter((m) => m !== model);
+    store.setSetting(`hidden_models:${def.id}`, JSON.stringify(list));
+    store.audit(hidden ? "provider.model_hidden" : "provider.model_shown", def.id, model);
+    deps.refreshProviders?.();
+    res.json({ ok: true, hiddenModels: list });
+  });
+
+  // Custom models (user-added ids with optional display names).
+  app.post("/api/providers/:id/models/custom", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const model = typeof req.body?.model === "string" ? req.body.model.trim() : "";
+    const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+    const remove = req.body?.remove === true;
+    if (!model) {
+      res.status(400).json({ error: { message: "model is required", type: "bad_request" } });
+      return;
+    }
+    let list: Array<{ id: string; name?: string }> = [];
+    try {
+      list = JSON.parse(store.getSetting(`custom_models:${def.id}`) ?? "[]") as Array<{
+        id: string;
+        name?: string;
+      }>;
+    } catch {
+      list = [];
+    }
+    list = list.filter((c) => c.id !== model);
+    if (!remove) list.push(name ? { id: model, name } : { id: model });
+    store.setSetting(`custom_models:${def.id}`, JSON.stringify(list));
+    store.audit(remove ? "provider.custom_model_removed" : "provider.custom_model_added", def.id, model);
+    deps.refreshProviders?.();
+    res.json({ ok: true, customModels: list });
+  });
+
+  // Param Filters: comma-separated request params stripped for this provider.
+  app.post("/api/providers/:id/param-block", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const params = typeof req.body?.params === "string" ? req.body.params : "";
+    store.setSetting(`param_block:${def.id}`, params);
+    store.audit("provider.param_block", def.id, params);
+    deps.refreshProviders?.();
+    res.json({ ok: true, blockedParams: params });
   });
 
   app.delete("/api/providers/:id/default-model", (req: Request, res: Response) => {
