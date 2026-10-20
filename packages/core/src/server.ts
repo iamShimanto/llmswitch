@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Alerter } from "./alerts/index.js";
@@ -163,6 +163,11 @@ export function createServer(
           enabled: c.enabled,
           createdAt: c.createdAt,
         })),
+    globalSystemPrompt: () => {
+      if (store.getSetting("gsp_enabled") !== "1") return null;
+      const text = store.getSetting("gsp_text");
+      return text && text.trim() ? text : null;
+    },
   });
   const routingLog = new RoutingEventLog();
 
@@ -171,6 +176,21 @@ export function createServer(
   const hasDashboard = existsSync(join(dashboardDir, "index.html"));
 
   const sessions = new DashboardSessions(store);
+  // VS Code token alias: /api/v1/vscode/<gateway-key>/... behaves exactly
+  // like /v1/... with that key as the Bearer token — for tools (VS Code
+  // Copilot Chat BYOK etc.) that cannot set an Authorization header.
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    const m = /^\/api\/v1\/vscode\/([^/]+)(\/.*)?$/.exec(req.url);
+    if (m) {
+      try {
+        req.headers.authorization = `Bearer ${decodeURIComponent(m[1])}`;
+      } catch {
+        req.headers.authorization = `Bearer ${m[1]}`;
+      }
+      req.url = `/v1${m[2] ?? ""}`;
+    }
+    next();
+  });
   app.use(createAuth(store, limiter, sessions));
   registerDashboardAuthRoutes(app, store, sessions);
   // Re-resolve connected providers IN PLACE (same array reference the

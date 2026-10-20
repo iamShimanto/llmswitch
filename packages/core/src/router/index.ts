@@ -102,6 +102,8 @@ export interface RouterOptions {
   routingRules?: () => RoutingRule[];
   /** Live router combos (OmniRoute-style virtual models). */
   combos?: () => RouterCombo[];
+  /** Optional global system prompt injected into every chat request. */
+  globalSystemPrompt?: () => string | null;
 }
 
 /** Multi-account plumbing supplied by the server (backed by the store). */
@@ -330,6 +332,7 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
   const accountHooks = opts.accounts;
   const routingRulesFn = opts.routingRules;
   const combosFn = opts.combos;
+  const gspFn = opts.globalSystemPrompt;
   const comboCursors = new Map<string, number>();
   const comboWinners = new Map<string, string>();
 
@@ -449,6 +452,19 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     const strategy = opts.strategy ?? "priority";
     const fetchFn = opts.fetchFn ?? fetch;
     const timeoutMs = opts.timeoutMs ?? 120_000;
+
+    // Global system prompt (dashboard Endpoint page): prepend once —
+    // combo/auto recursion re-enters route(), so skip when already first.
+    const gsp = gspFn?.();
+    if (gsp && Array.isArray(body.messages)) {
+      const first = body.messages[0] as { role?: string; content?: unknown } | undefined;
+      if (!(first?.role === "system" && first.content === gsp)) {
+        body = {
+          ...body,
+          messages: [{ role: "system", content: gsp }, ...body.messages] as ChatCompletionRequest["messages"],
+        };
+      }
+    }
 
     // Router combos (virtual models) intercept before normal resolution.
     if ((opts.comboDepth ?? 0) < 3 && body.model !== "auto") {
