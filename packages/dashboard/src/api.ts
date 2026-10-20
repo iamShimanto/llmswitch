@@ -138,10 +138,10 @@ export const api = {
     }),
   discover: (id: string) => req<{ provider: string; models: string[] }>(`/api/providers/${id}/discover`),
   catalog: () => req<CatalogEntry[]>("/api/catalog"),
-  saveProviderKey: (id: string, key: string) =>
-    req<{ ok: boolean; connected: boolean }>(`/api/providers/${id}/key`, {
+  saveProviderKey: (id: string, key: string, accountLabel?: string) =>
+    req<{ ok: boolean; connected: boolean; accountId?: string }>(`/api/providers/${id}/key`, {
       method: "POST",
-      body: JSON.stringify({ key }),
+      body: JSON.stringify({ key, ...(accountLabel ? { accountLabel } : {}) }),
     }),
   removeProviderKey: (id: string) =>
     req<{ ok: boolean; connected: boolean }>(`/api/providers/${id}/key`, { method: "DELETE" }),
@@ -182,15 +182,15 @@ export const api = {
       `/api/analytics/summary?days=${days}${keyId ? `&key=${encodeURIComponent(keyId)}` : ""}`,
     ),
   sessions: () => req<{ sessions: SessionMeta[] }>("/api/sessions"),
-  importSession: (provider: string, cookies: string, cookieDomain?: string, accessToken?: string) =>
-    req<{ ok: boolean; connected: boolean }>("/api/sessions/import", {
+  importSession: (provider: string, cookies: string, cookieDomain?: string, accessToken?: string, accountLabel?: string) =>
+    req<{ ok: boolean; connected: boolean; accountId?: string }>("/api/sessions/import", {
       method: "POST",
-      body: JSON.stringify({ provider, cookies, cookieDomain, ...(accessToken ? { accessToken } : {}) }),
+      body: JSON.stringify({ provider, cookies, cookieDomain, ...(accessToken ? { accessToken } : {}), ...(accountLabel ? { accountLabel } : {}) }),
     }),
-  museDeviceStart: () =>
+  museDeviceStart: (accountLabel?: string) =>
     req<{ state: string; userCode: string; verificationUrl: string; expiresIn: number; interval: number }>(
       "/api/oauth/muse-code/device/start",
-      { method: "POST", body: "{}" },
+      { method: "POST", body: JSON.stringify(accountLabel ? { accountLabel } : {}) },
     ),
   museDevicePoll: (state: string) =>
     req<{ status: string; email?: string; tier?: string; subsActive?: boolean; requirePayment?: boolean; error?: string }>(
@@ -213,21 +213,41 @@ export const api = {
   oauthAntigravityDisconnect: () =>
     req<{ connected: boolean }>("/api/oauth/antigravity/disconnect", { method: "POST" }),
   oauthStart: (id: string) => req<{ url: string }>(`/api/oauth/${id}/start`),
-  oauthTokenSave: (id: string, accessToken: string, refreshToken?: string) =>
-    req<{ ok: boolean; connected: boolean }>(`/api/oauth/${id}/token`, {
+  oauthTokenSave: (id: string, accessToken: string, refreshToken?: string, accountLabel?: string) =>
+    req<{ ok: boolean; connected: boolean; accountId?: string }>(`/api/oauth/${id}/token`, {
       method: "POST",
-      body: JSON.stringify({ accessToken, refreshToken }),
+      body: JSON.stringify({ accessToken, refreshToken, ...(accountLabel ? { accountLabel } : {}) }),
     }),
   oauthTokenRemove: (id: string) =>
     req<{ ok: boolean; connected: boolean }>(`/api/oauth/${id}/token`, { method: "DELETE" }),
-  oauthComplete: (id: string, url: string) =>
-    req<{ connected: boolean; email?: string | null }>(`/api/oauth/${id}/complete`, {
+  oauthComplete: (id: string, url: string, accountLabel?: string) =>
+    req<{ connected: boolean; email?: string | null; accountId?: string }>(`/api/oauth/${id}/complete`, {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, ...(accountLabel ? { accountLabel } : {}) }),
     }),
   oauthStatus: (id: string) => req<OAuthStatus>(`/api/oauth/${id}/status`),
   oauthDisconnect: (id: string) =>
     req<{ connected: boolean }>(`/api/oauth/${id}/disconnect`, { method: "POST" }),
+  accounts: (providerId?: string) =>
+    req<{ accounts: ProviderAccount[] }>(
+      `/api/accounts${providerId ? `?provider=${encodeURIComponent(providerId)}` : ""}`,
+    ),
+  updateAccount: (id: string, patch: { label?: string; enabled?: boolean }) =>
+    req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "POST", body: JSON.stringify(patch) }),
+  deleteAccount: (id: string) => req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" }),
+  routingRules: () => req<{ rules: RoutingRule[] }>("/api/routing-rules"),
+  addRoutingRule: (pattern: string, providers: string[], strategy?: string) =>
+    req<{ ok: boolean; rule: RoutingRule }>("/api/routing-rules", {
+      method: "POST",
+      body: JSON.stringify({ pattern, providers, strategy: strategy ?? "" }),
+    }),
+  updateRoutingRule: (
+    id: string,
+    patch: { pattern?: string; providers?: string[]; strategy?: string; enabled?: boolean },
+  ) =>
+    req<{ ok: boolean }>(`/api/routing-rules/${id}`, { method: "POST", body: JSON.stringify(patch) }),
+  deleteRoutingRule: (id: string) =>
+    req<{ ok: boolean }>(`/api/routing-rules/${id}`, { method: "DELETE" }),
   getConfig: () => req<GatewayConfig>("/api/config"),
   putConfig: (patch: Partial<ConfigPatch>) =>
     req<GatewayConfig>("/api/config", { method: "PUT", body: JSON.stringify(patch) }),
@@ -398,8 +418,31 @@ export interface ConfigValue<T> {
   source: "db" | "env";
 }
 
+export interface ProviderAccount {
+  id: string;
+  providerId: string;
+  label: string;
+  kind: "api_key" | "session";
+  enabled: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+  calls: number;
+  errors: number;
+  lastError: string | null;
+}
+
+export interface RoutingRule {
+  id: string;
+  pattern: string;
+  providers: string[];
+  strategy: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
 export interface GatewayConfig {
   strategy: ConfigValue<string>;
+  account_strategy: ConfigValue<string>;
   pii_redact: ConfigValue<boolean>;
   compression_default: ConfigValue<string | null>;
   alert_webhook_url: ConfigValue<string | null> & { enabled: boolean };
@@ -409,6 +452,7 @@ export interface GatewayConfig {
 
 export interface ConfigPatch {
   strategy?: string;
+  account_strategy?: string;
   pii_redact?: boolean;
   compression_default?: string | null;
   alert_webhook_url?: string | null;

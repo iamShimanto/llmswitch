@@ -224,9 +224,9 @@ export interface AntigravityCreds {
   email?: string;
 }
 
-function sessionPath(env: NodeJS.ProcessEnv, sessionName = "antigravity"): string {
+function sessionPath(env: NodeJS.ProcessEnv, sessionName = "antigravity", accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, `${sessionName}.json`);
+  return join(dir, accountId ? `${sessionName}--${accountId}.json` : `${sessionName}.json`);
 }
 
 /** True when a usable Antigravity session/token is configured (sync). */
@@ -244,9 +244,9 @@ interface StoredAntigravitySession {
   email?: string;
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv, sessionName = "antigravity"): StoredAntigravitySession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, sessionName = "antigravity", accountId?: string | null): StoredAntigravitySession | null {
   try {
-    const p = sessionPath(env, sessionName);
+    const p = sessionPath(env, sessionName, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredAntigravitySession;
   } catch {
@@ -284,13 +284,14 @@ export async function resolveAntigravityCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
   sessionName = "antigravity",
+  accountId?: string | null,
 ): Promise<AntigravityCreds> {
   const envAccess = (env.ANTIGRAVITY_ACCESS_TOKEN ?? "").trim();
   const envProject = (env.ANTIGRAVITY_PROJECT_ID ?? "").trim();
-  if (envAccess) return { accessToken: envAccess, projectId: envProject || undefined };
+  if (envAccess && !accountId) return { accessToken: envAccess, projectId: envProject || undefined };
 
-  const stored = readStoredSession(env, sessionName);
-  const refreshToken = (env.ANTIGRAVITY_OAUTH_REFRESH_TOKEN ?? "").trim() || stored?.refreshToken;
+  const stored = readStoredSession(env, sessionName, accountId);
+  const refreshToken = (!accountId ? (env.ANTIGRAVITY_OAUTH_REFRESH_TOKEN ?? "").trim() : "") || stored?.refreshToken;
   if (stored?.accessToken && stored.expiresAt && stored.expiresAt > Date.now() + 60_000) {
     return { accessToken: stored.accessToken, refreshToken, projectId: stored.projectId ?? envProject, email: stored.email };
   }
@@ -521,7 +522,8 @@ export async function executeAntigravityChat(
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
   sessionName = "antigravity",
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveAntigravityCreds(env, fetchFn, sessionName);
+  const creds = await resolveAntigravityCreds(env, fetchFn, sessionName, accountId);
   return executeAntigravity(model, body, creds, { fetchFn, timeoutMs, env });
 }

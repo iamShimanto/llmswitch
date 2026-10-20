@@ -38,6 +38,68 @@ export function sessionFilePath(id: string, env: NodeJS.ProcessEnv = process.env
   return join(dir, `${id}.json`);
 }
 
+/**
+ * Session file for one ACCOUNT of a provider (multi-account).
+ * No accountId -> the default account file (`<id>.json`); with one ->
+ * `<id>--<accountId>.json` alongside it.
+ */
+/**
+ * On-disk session file base name for a provider — usually the provider
+ * id, except GitHub Copilot whose executor predates the id convention.
+ */
+export function sessionBaseName(providerId: string): string {
+  if (providerId === "github") return "github-copilot";
+  return providerId;
+}
+
+/**
+ * Run a login completion that persists to the provider's DEFAULT session
+ * file, but adopt the result as a NEW DB account instead: any existing
+ * default session is stashed first and restored afterwards, so adding an
+ * account never clobbers the default one.
+ */
+export async function completeAsAccount<T>(
+  store: { addAccount: (input: { providerId: string; label: string; kind: "api_key" | "session" }) => { id: string } },
+  providerId: string,
+  sessionName: string,
+  label: string,
+  doComplete: () => Promise<T>,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ result: T; accountId: string | null }> {
+  const { renameSync } = await import("node:fs");
+  const defFile = sessionFilePath(sessionName, env);
+  const stash = `${defFile}.stash-${Math.random().toString(36).slice(2, 8)}`;
+  const hadDefault = existsSync(defFile);
+  if (hadDefault) renameSync(defFile, stash);
+  try {
+    const result = await doComplete();
+    let accountId: string | null = null;
+    if (existsSync(defFile)) {
+      const acct = store.addAccount({ providerId, label, kind: "session" });
+      renameSync(defFile, accountSessionFilePath(sessionName, acct.id, env));
+      accountId = acct.id;
+    }
+    return { result, accountId };
+  } finally {
+    if (hadDefault && existsSync(stash)) {
+      try {
+        renameSync(stash, defFile);
+      } catch {
+        /* best effort */
+      }
+    }
+  }
+}
+
+export function accountSessionFilePath(
+  id: string,
+  accountId: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
+  return join(dir, accountId ? `${id}--${accountId}.json` : `${id}.json`);
+}
+
 interface StoredSession {
   accessToken?: string;
   refreshToken?: string;
@@ -46,9 +108,13 @@ interface StoredSession {
   email?: string;
 }
 
-export function readStoredSession(id: string, env: NodeJS.ProcessEnv = process.env): StoredSession | null {
+export function readStoredSession(
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
+): StoredSession | null {
   try {
-    const p = sessionFilePath(id, env);
+    const p = accountId ? accountSessionFilePath(id, accountId, env) : sessionFilePath(id, env);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredSession;
   } catch {
@@ -57,9 +123,13 @@ export function readStoredSession(id: string, env: NodeJS.ProcessEnv = process.e
 }
 
 /** True when an env token or a login session exists (sync). */
-export function hasProviderSession(id: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  if ((env[`${envPrefix(id)}_ACCESS_TOKEN`] ?? "").trim()) return true;
-  return existsSync(sessionFilePath(id, env));
+export function hasProviderSession(
+  id: string,
+  env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
+): boolean {
+  if (!accountId && (env[`${envPrefix(id)}_ACCESS_TOKEN`] ?? "").trim()) return true;
+  return existsSync(accountId ? accountSessionFilePath(id, accountId, env) : sessionFilePath(id, env));
 }
 
 export function hasCodebuddyCnCreds(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -201,14 +271,15 @@ export async function refreshProviderToken(
 }
 
 /** Persist refreshed tokens back to the session file (0600, best-effort). */
-export function persistRefreshedSession(id: string, creds: ResolvedOAuthCreds, env: NodeJS.ProcessEnv = process.env): void {
+export function persistRefreshedSession(id: string, creds: ResolvedOAuthCreds, env: NodeJS.ProcessEnv = process.env, accountId?: string | null): void {
   try {
-    const existing = readStoredSession(id, env) ?? {};
+    const existing = readStoredSession(id, env, accountId) ?? {};
+    const file = accountId ? accountSessionFilePath(id, accountId, env) : sessionFilePath(id, env);
     writeFileSync(
-      sessionFilePath(id, env),
+      file,
       JSON.stringify({ ...existing, accessToken: creds.accessToken, refreshToken: creds.refreshToken }, null, 2),
     );
-    chmodSync(sessionFilePath(id, env), 0o600);
+    chmodSync(file, 0o600);
   } catch {
     /* best-effort */
   }
@@ -219,10 +290,11 @@ export async function resolveProviderToken(
   id: P11IProviderId,
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<ResolvedOAuthCreds> {
   const envToken = (env[`${envPrefix(id)}_ACCESS_TOKEN`] ?? "").trim();
-  if (envToken) return { accessToken: envToken };
-  const stored = readStoredSession(id, env);
+  if (envToken && !accountId) return { accessToken: envToken };
+  const stored = readStoredSession(id, env, accountId);
   if (stored?.accessToken && stored.expiresAt && stored.expiresAt > Date.now() + 60_000) {
     return { accessToken: stored.accessToken, refreshToken: stored.refreshToken, meta: stored.meta, email: stored.email };
   }
@@ -231,6 +303,6 @@ export async function resolveProviderToken(
   }
   const fresh = await refreshProviderToken(id, stored.refreshToken, env, fetchFn);
   const creds: ResolvedOAuthCreds = { accessToken: fresh.accessToken, refreshToken: fresh.refreshToken, meta: stored.meta, email: stored.email };
-  persistRefreshedSession(id, creds, env);
+  persistRefreshedSession(id, creds, env, accountId);
   return creds;
 }

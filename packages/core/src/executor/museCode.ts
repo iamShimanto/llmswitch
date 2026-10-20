@@ -68,8 +68,9 @@ interface MuseCreds {
 function resolveMuseCreds(
   provider: ResolvedProvider,
   env: NodeJS.ProcessEnv,
+  accountId?: string | null,
 ): MuseCreds {
-  const session = readMuseCodeSession(env);
+  const session = readMuseCodeSession(env, accountId);
   const baseUrl =
     (typeof session?.meta?.baseUrl === "string" && session.meta.baseUrl) ||
     provider.baseUrl;
@@ -91,13 +92,14 @@ export async function executeMuseCodeChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 180_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = resolveMuseCreds(provider, env);
+  const creds = resolveMuseCreds(provider, env, accountId);
   if (!creds.apiKey && creds.dcaToken) {
     const minted = await mintMuseApiKey(fetchFn, creds.dcaToken);
     creds.apiKey = (minted as unknown as Record<string, string>)["api" + "Key"];
     creds.baseUrl = minted.baseUrl || creds.baseUrl;
-    updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl);
+    updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl, accountId);
   }
   if (!creds.apiKey) {
     throw new UpstreamError(
@@ -119,7 +121,7 @@ export async function executeMuseCodeChat(
       const minted = await mintMuseApiKey(fetchFn, creds.dcaToken);
       creds.apiKey = (minted as unknown as Record<string, string>)["api" + "Key"];
       creds.baseUrl = minted.baseUrl || creds.baseUrl;
-      updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl);
+      updateMuseCodeSessionKey(env, minted.apiKey, minted.baseUrl, accountId);
       return await museCodeRequest(creds, model, body, fetchFn, timeoutMs);
     }
     throw err;

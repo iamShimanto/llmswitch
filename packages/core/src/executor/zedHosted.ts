@@ -55,9 +55,9 @@ export const ZED_PROVIDERS = {
 } as const;
 export type ZedWireProvider = (typeof ZED_PROVIDERS)[keyof typeof ZED_PROVIDERS];
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "zed-hosted.json");
+  return join(dir, accountId ? `zed-hosted--${accountId}.json` : "zed-hosted.json");
 }
 
 export interface ZedHostedCreds {
@@ -76,11 +76,11 @@ interface StoredZedSession {
   meta?: { userId?: string; systemId?: string };
 }
 
-export function resolveZedHostedCreds(env: NodeJS.ProcessEnv = process.env): ZedHostedCreds {
+export function resolveZedHostedCreds(env: NodeJS.ProcessEnv = process.env, accountId?: string | null): ZedHostedCreds {
   const envToken = (env.ZED_HOSTED_ACCESS_TOKEN ?? "").trim();
   const envUser = (env.ZED_HOSTED_USER_ID ?? "").trim();
-  if (envToken && envUser) return { userId: envUser, accessToken: envToken };
-  const p = sessionPath(env);
+  if (envToken && envUser && !accountId) return { userId: envUser, accessToken: envToken };
+  const p = sessionPath(env, accountId);
   if (existsSync(p)) {
     try {
       const s = JSON.parse(readFileSync(p, "utf8")) as StoredZedSession;
@@ -221,8 +221,9 @@ export async function executeZedHostedChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = resolveZedHostedCreds(env);
+  const creds = resolveZedHostedCreds(env, accountId);
   const llmToken = await fetchZedLlmToken(creds, fetchFn);
   const wireProvider = inferZedWireProvider(model, env);
   const stream = body.stream === true;

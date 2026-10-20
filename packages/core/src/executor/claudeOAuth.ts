@@ -100,9 +100,9 @@ export interface ClaudeCreds {
   accessToken: string;
 }
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "claude.json");
+  return join(dir, accountId ? `claude--${accountId}.json` : "claude.json");
 }
 
 /** True when a usable Claude session/token is configured (sync). */
@@ -118,9 +118,9 @@ interface StoredClaudeSession {
   expiresAt?: number;
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv): StoredClaudeSession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, accountId?: string | null): StoredClaudeSession | null {
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredClaudeSession;
   } catch {
@@ -132,11 +132,12 @@ function readStoredSession(env: NodeJS.ProcessEnv): StoredClaudeSession | null {
 export async function resolveClaudeCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<ClaudeCreds> {
   const envAccess = (env.CLAUDE_ACCESS_TOKEN ?? "").trim();
-  if (envAccess) return { accessToken: envAccess };
+  if (envAccess && !accountId) return { accessToken: envAccess };
 
-  const stored = readStoredSession(env);
+  const stored = readStoredSession(env, accountId);
   const refreshToken = (env.CLAUDE_OAUTH_REFRESH_TOKEN ?? "").trim() || stored?.refreshToken;
   if (stored?.accessToken && stored.expiresAt && stored.expiresAt > Date.now() + 60_000) {
     return { accessToken: stored.accessToken };
@@ -260,7 +261,8 @@ export async function executeClaudeOAuthChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveClaudeCreds(env, fetchFn);
+  const creds = await resolveClaudeCreds(env, fetchFn, accountId);
   return executeClaudeOAuth(model, body, creds, { fetchFn, timeoutMs, env });
 }

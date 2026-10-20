@@ -27,9 +27,9 @@ import type { ExecuteResult } from "./http.js";
 
 export const WEBCHAT_PROVIDER_IDS: ReadonlySet<string> = new Set(WEBCHAT_DRIVER_IDS);
 
-export function webchatSessionPath(id: string, env: NodeJS.ProcessEnv = process.env): string {
+export function webchatSessionPath(id: string, env: NodeJS.ProcessEnv = process.env, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, `${id}.json`);
+  return join(dir, accountId ? `${id}--${accountId}.json` : `${id}.json`);
 }
 
 /** Connected check for cookie providers: a cookie session file exists. */
@@ -45,9 +45,9 @@ interface StoredCookieSession {
   accessToken?: string;
 }
 
-function readCookieSession(id: string, env: NodeJS.ProcessEnv): StoredCookieSession | null {
+function readCookieSession(id: string, env: NodeJS.ProcessEnv, accountId?: string | null): StoredCookieSession | null {
   try {
-    const p = webchatSessionPath(id, env);
+    const p = webchatSessionPath(id, env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredCookieSession;
   } catch {
@@ -97,9 +97,10 @@ export async function executeWebChatChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
   const id = provider.id;
-  const stored = readCookieSession(id, env);
+  const stored = readCookieSession(id, env, accountId);
   if (!stored?.cookies) {
     throw new UpstreamError(
       "auth_error",

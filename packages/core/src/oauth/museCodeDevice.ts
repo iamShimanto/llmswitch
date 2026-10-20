@@ -16,7 +16,7 @@
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { sessionFilePath } from "./sessions.js";
+import { accountSessionFilePath, sessionFilePath } from "./sessions.js";
 
 export const MUSE_CODE_DEVICE_CODE_URL = "https://auth.meta.com/oidc/device/authorization/";
 export const MUSE_CODE_TOKEN_URL = "https://auth.meta.com/oidc/device/token/";
@@ -197,6 +197,7 @@ export interface MuseCodeSession {
 export function saveMuseCodeSession(
   env: NodeJS.ProcessEnv,
   input: { dcaToken: string; minted?: MuseMintedKey },
+  accountId?: string | null,
 ): MuseCodeSession {
   const session: MuseCodeSession = {
     accessToken: input.minted?.apiKey ?? "",
@@ -211,7 +212,7 @@ export function saveMuseCodeSession(
       connectedVia: "device",
     },
   };
-  const file = sessionFilePath("muse-code", env);
+  const file = accountSessionFilePath("muse-code", accountId, env);
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(session, null, 2), { mode: 0o600 });
   try {
@@ -222,9 +223,9 @@ export function saveMuseCodeSession(
   return session;
 }
 
-export function readMuseCodeSession(env: NodeJS.ProcessEnv = process.env): MuseCodeSession | null {
+export function readMuseCodeSession(env: NodeJS.ProcessEnv = process.env, accountId?: string | null): MuseCodeSession | null {
   try {
-    const p = sessionFilePath("muse-code", env);
+    const p = accountSessionFilePath("muse-code", accountId, env);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as MuseCodeSession;
   } catch {
@@ -233,12 +234,12 @@ export function readMuseCodeSession(env: NodeJS.ProcessEnv = process.env): MuseC
 }
 
 /** Update just the minted key after a remint (keeps the dca + meta). */
-export function updateMuseCodeSessionKey(env: NodeJS.ProcessEnv, apiKey: string, baseUrl?: string): void {
-  const s = readMuseCodeSession(env);
+export function updateMuseCodeSessionKey(env: NodeJS.ProcessEnv, apiKey: string, baseUrl?: string, accountId?: string | null): void {
+  const s = readMuseCodeSession(env, accountId);
   if (!s) return;
   s.accessToken = apiKey;
   if (baseUrl) s.meta = { ...s.meta, baseUrl };
-  const file = sessionFilePath("muse-code", env);
+  const file = accountSessionFilePath("muse-code", accountId, env);
   writeFileSync(file, JSON.stringify(s, null, 2), { mode: 0o600 });
   try {
     chmodSync(file, 0o600);

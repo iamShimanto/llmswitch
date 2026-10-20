@@ -31,9 +31,9 @@ import type { ExecuteResult } from "./http.js";
 export const TRAE_API_BASE_URL = "https://core-normal.trae.ai/api/remote/v1";
 export const TRAE_DEFAULT_WEB_ORIGIN = "https://work.trae.ai";
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "trae.json");
+  return join(dir, accountId ? `trae--${accountId}.json` : "trae.json");
 }
 
 export interface TraeCreds {
@@ -56,11 +56,11 @@ export function hasTraeCreds(env: NodeJS.ProcessEnv = process.env): boolean {
   return existsSync(sessionPath(env));
 }
 
-export function resolveTraeCreds(env: NodeJS.ProcessEnv = process.env): TraeCreds {
+export function resolveTraeCreds(env: NodeJS.ProcessEnv = process.env, accountId?: string | null): TraeCreds {
   const envToken = (env.TRAE_ACCESS_TOKEN ?? "").trim() || (env.TRAE_CLOUD_IDE_JWT ?? "").trim();
-  if (envToken) return { token: envToken, identity: {} };
+  if (envToken && !accountId) return { token: envToken, identity: {} };
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (existsSync(p)) {
       const s = JSON.parse(readFileSync(p, "utf8")) as {
         accessToken?: string;
@@ -213,8 +213,9 @@ export async function executeTraeChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 300_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = resolveTraeCreds(env);
+  const creds = resolveTraeCreds(env, accountId);
   const headers = buildTraeHeaders(creds, env);
   const base = (env.TRAE_BASE_URL ?? TRAE_API_BASE_URL).replace(/\/$/, "");
   const started = Date.now();

@@ -112,7 +112,26 @@ export function createServer(
   } catch {
     /* a seeding failure must never block boot */
   }
-  const router = createRouter(providers, { cache, semantic });
+  const router = createRouter(providers, {
+    cache,
+    semantic,
+    accounts: {
+      strategy: () => {
+        const v = store.getSetting("account_strategy");
+        return v === "least-used" || v === "priority" || v === "random" ? v : "round-robin";
+      },
+      stats: (providerId) =>
+        store.listAccounts(providerId).map((a) => ({ id: a.id, calls: a.calls })),
+      record: (accountId, ok, error) => {
+        try {
+          store.recordAccountUse(accountId, ok, error);
+        } catch {
+          /* stats must never break traffic */
+        }
+      },
+    },
+    routingRules: () => store.listRoutingRules(),
+  });
   const routingLog = new RoutingEventLog();
 
   // Dashboard SPA (served when built; absent in pure-API mode)
@@ -134,7 +153,27 @@ export function createServer(
     for (const [k, v] of Object.entries(store.listSettings("provider_key:"))) {
       env[k.slice("provider_key:".length)] = v;
     }
-    const fresh = registry.connected(env);
+    // Multi-account: enabled DB accounts force-resolve their provider
+    // (an account may be its ONLY credential) and attach to it below.
+    const enabledAccounts = store.listAccounts().filter((x) => x.enabled);
+    const forceIds = new Set(enabledAccounts.map((x) => x.providerId));
+    const fresh = registry.connected(env, forceIds);
+    for (const p of fresh) {
+      const accts = enabledAccounts.filter((x) => x.providerId === p.id);
+      if (accts.length === 0) continue;
+      p.accounts = accts.map((x) => ({ id: x.id, label: x.label, kind: x.kind }));
+      const keyAccts = accts.filter((x) => x.kind === "api_key" && x.secret);
+      if (keyAccts.length > 0) {
+        p.keyAccounts = new Map();
+        const keys = [...(p.allKeys ?? [])];
+        for (const a of keyAccts) {
+          if (!keys.includes(a.secret!)) keys.push(a.secret!);
+          p.keyAccounts.set(a.secret!, a.id);
+        }
+        p.allKeys = keys;
+        if (!p.apiKey) p.apiKey = keys[0] ?? "";
+      }
+    }
     // Union in models the user discovered/imported earlier — they persist
     // in the store (discovered_models:<id>) across restarts and refreshes.
     for (const p of fresh) {

@@ -31,10 +31,17 @@ export function collectKeys(envKey: string, env: NodeJS.ProcessEnv = process.env
   return single ? [single] : [];
 }
 
+export type AccountStrategy = "round-robin" | "least-used" | "priority" | "random";
+
+export function isAccountStrategy(v: unknown): v is AccountStrategy {
+  return v === "round-robin" || v === "least-used" || v === "priority" || v === "random";
+}
+
 export class AccountPool {
   private readonly keys: string[];
   private cursor = 0;
   private coolingUntil = new Map<string, number>();
+  private usageCount = new Map<string, number>();
 
   constructor(keys: string[], private cooldownMs = 60_000) {
     this.keys = [...new Set(keys)];
@@ -53,16 +60,38 @@ export class AccountPool {
    * Next healthy key in round-robin order, skipping cooling keys and any in
    * `exclude` (keys already tried this attempt). Null when none available.
    */
-  next(exclude: Set<string> = new Set(), now = Date.now()): string | null {
+  next(
+    exclude: Set<string> = new Set(),
+    now = Date.now(),
+    strategy: AccountStrategy = "round-robin",
+  ): string | null {
     if (this.keys.length === 0) return null;
-    for (let i = 0; i < this.keys.length; i++) {
-      const k = this.keys[(this.cursor + i) % this.keys.length]!;
-      if (exclude.has(k)) continue;
-      if ((this.coolingUntil.get(k) ?? 0) > now) continue;
-      this.cursor = (this.cursor + i + 1) % this.keys.length;
-      return k;
+    const healthy = this.keys.filter(
+      (k) => !exclude.has(k) && (this.coolingUntil.get(k) ?? 0) <= now,
+    );
+    if (healthy.length === 0) return null;
+    let ordered = healthy;
+    if (strategy === "priority") {
+      ordered = healthy; // configured order
+    } else if (strategy === "least-used") {
+      ordered = [...healthy].sort(
+        (x, y) => (this.usageCount.get(x) ?? 0) - (this.usageCount.get(y) ?? 0),
+      );
+    } else if (strategy === "random") {
+      ordered = [...healthy];
+      for (let i = ordered.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [ordered[i], ordered[j]] = [ordered[j]!, ordered[i]!];
+      }
+    } else {
+      // round-robin: rotate the healthy list by the cursor position
+      const start = this.cursor % healthy.length;
+      ordered = [...healthy.slice(start), ...healthy.slice(0, start)];
     }
-    return null;
+    const pick = ordered[0]!;
+    const idx = this.keys.indexOf(pick);
+    if (idx >= 0) this.cursor = (idx + 1) % this.keys.length;
+    return pick;
   }
 
   /** Mark a key bad/rate-limited: cool it for `cooldownMs`. */
@@ -73,6 +102,7 @@ export class AccountPool {
   /** A success clears any cooldown on the key. */
   reportSuccess(key: string): void {
     this.coolingUntil.delete(key);
+    this.usageCount.set(key, (this.usageCount.get(key) ?? 0) + 1);
   }
 
   /** Counts only — never key values. */

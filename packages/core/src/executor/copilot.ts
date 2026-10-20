@@ -122,9 +122,10 @@ export interface CopilotCreds {
   email?: string;
 }
 
-function sessionPath(env: NodeJS.ProcessEnv, id: string): string {
+function sessionPath(env: NodeJS.ProcessEnv, id: string, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, id === "ghe-copilot" ? "ghe-copilot.json" : "github-copilot.json");
+  const base = id === "ghe-copilot" ? "ghe-copilot" : "github-copilot";
+  return join(dir, accountId ? `${base}--${accountId}.json` : `${base}.json`);
 }
 
 /** True when a usable Copilot session/token is configured (sync). */
@@ -145,9 +146,9 @@ interface StoredCopilotSession {
   email?: string;
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv, id: string): StoredCopilotSession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, id: string, accountId?: string | null): StoredCopilotSession | null {
   try {
-    const p = sessionPath(env, id);
+    const p = sessionPath(env, id, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredCopilotSession;
   } catch {
@@ -159,8 +160,11 @@ function readStoredSession(env: NodeJS.ProcessEnv, id: string): StoredCopilotSes
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 export function clearCopilotTokenCache(id?: string): void {
-  if (id) tokenCache.delete(id);
-  else tokenCache.clear();
+  if (id) {
+    for (const k of [...tokenCache.keys()]) {
+      if (k === id || k.startsWith(`${id}:`)) tokenCache.delete(k);
+    }
+  } else tokenCache.clear();
 }
 
 function gheHost(env: NodeJS.ProcessEnv, id: string, stored: StoredCopilotSession | null): string | null {
@@ -229,9 +233,10 @@ export async function resolveCopilotCreds(
   env: NodeJS.ProcessEnv,
   fetchFn: typeof fetch,
   id: string,
+  accountId?: string | null,
 ): Promise<CopilotCreds> {
-  const cached = tokenCache.get(id);
-  const stored = readStoredSession(env, id);
+  const cached = tokenCache.get(`${id}:${accountId ?? ""}`);
+  const stored = readStoredSession(env, id, accountId);
   if (cached && cached.expiresAt - Date.now() >= 5 * 60 * 1000) {
     return {
       copilotToken: cached.token,
@@ -240,7 +245,7 @@ export async function resolveCopilotCreds(
     };
   }
   if (stored?.copilotToken && stored.copilotTokenExpiresAt && stored.copilotTokenExpiresAt - Date.now() >= 5 * 60 * 1000) {
-    tokenCache.set(id, { token: stored.copilotToken, expiresAt: stored.copilotTokenExpiresAt });
+    tokenCache.set(`${id}:${accountId ?? ""}`, { token: stored.copilotToken, expiresAt: stored.copilotTokenExpiresAt });
     return {
       copilotToken: stored.copilotToken,
       apiBaseUrl: stored.copilotApiUrl?.trim() || (id === "ghe-copilot" ? "" : GITHUB_COPILOT_CHAT_BASE_URL),
@@ -272,7 +277,7 @@ export async function resolveCopilotCreds(
   if (!exchanged) {
     throw new CopilotAuthError(401, `${id}: tokens expired and could not refresh — re-run: ${loginHint(id)}`);
   }
-  tokenCache.set(id, { token: exchanged.token, expiresAt: exchanged.expiresAt });
+  tokenCache.set(`${id}:${accountId ?? ""}`, { token: exchanged.token, expiresAt: exchanged.expiresAt });
   const apiBaseUrl = exchanged.apiUrl?.trim() || stored?.copilotApiUrl?.trim() || GITHUB_COPILOT_CHAT_BASE_URL;
   return { copilotToken: exchanged.token, apiBaseUrl, email: stored?.email };
 }
@@ -374,8 +379,9 @@ export async function executeCopilotChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveCopilotCreds(env, fetchFn, provider.id);
+  const creds = await resolveCopilotCreds(env, fetchFn, provider.id, accountId);
   if (!creds.apiBaseUrl) {
     throw new CopilotAuthError(401, `${provider.id}: no chat API host resolved — re-run: ${loginHint(provider.id)}`);
   }

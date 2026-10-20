@@ -24,9 +24,9 @@ import type { ExecuteResult } from "./http.js";
 export const CURSOR_POLL_URL = "https://api2.cursor.sh/auth/poll";
 export const CURSOR_REFRESH_URL = "https://api2.cursor.sh/auth/exchange_user_api_key";
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "cursor.json");
+  return join(dir, accountId ? `cursor--${accountId}.json` : "cursor.json");
 }
 
 export interface CursorCreds {
@@ -43,7 +43,7 @@ export function hasCursorCreds(env: NodeJS.ProcessEnv = process.env): boolean {
   return existsSync(sessionPath(env));
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv): {
+function readStoredSession(env: NodeJS.ProcessEnv, accountId?: string | null): {
   accessToken?: string;
   refreshToken?: string;
   expiresAt?: number;
@@ -51,7 +51,7 @@ function readStoredSession(env: NodeJS.ProcessEnv): {
   meta?: { machineId?: string; authMethod?: string };
 } | null {
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8"));
   } catch {
@@ -63,11 +63,12 @@ function readStoredSession(env: NodeJS.ProcessEnv): {
 export async function resolveCursorCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<CursorCreds> {
   const envAccess = (env.CURSOR_ACCESS_TOKEN ?? "").trim();
-  if (envAccess) return { accessToken: envAccess, machineId: (env.CURSOR_MACHINE_ID ?? "").trim() || undefined };
+  if (envAccess && !accountId) return { accessToken: envAccess, machineId: (env.CURSOR_MACHINE_ID ?? "").trim() || undefined };
 
-  const stored = readStoredSession(env);
+  const stored = readStoredSession(env, accountId);
   const refreshToken = (env.CURSOR_OAUTH_REFRESH_TOKEN ?? "").trim() || stored?.refreshToken;
   if (stored?.accessToken && (!stored.expiresAt || stored.expiresAt > Date.now() + 60_000)) {
     return {
@@ -135,7 +136,8 @@ export async function executeCursorChat(
   _fetchFn: typeof fetch = fetch,
   _timeoutMs = 120_000,
   _env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  await resolveCursorCreds(_env, _fetchFn); // auth check first, so missing creds report as auth_error
+  await resolveCursorCreds(_env, _fetchFn, accountId); // auth check first, so missing creds report as auth_error
   throw new CursorWireError();
 }

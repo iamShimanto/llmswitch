@@ -98,9 +98,9 @@ export interface CodexCreds {
   accountId?: string;
 }
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "codex.json");
+  return join(dir, accountId ? `codex--${accountId}.json` : "codex.json");
 }
 
 /** True when a usable Codex session/token is configured (sync). */
@@ -117,9 +117,9 @@ interface StoredCodexSession {
   accountId?: string;
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv): StoredCodexSession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, accountId?: string | null): StoredCodexSession | null {
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredCodexSession;
   } catch {
@@ -131,13 +131,14 @@ function readStoredSession(env: NodeJS.ProcessEnv): StoredCodexSession | null {
 export async function resolveCodexCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<CodexCreds> {
   const envAccess = (env.CODEX_ACCESS_TOKEN ?? "").trim();
   const envAccountId = (env.CODEX_ACCOUNT_ID ?? "").trim() || undefined;
-  if (envAccess) return { accessToken: envAccess, accountId: envAccountId };
+  if (envAccess && !accountId) return { accessToken: envAccess, accountId: envAccountId };
 
-  const stored = readStoredSession(env);
-  const refreshToken = (env.CODEX_OAUTH_REFRESH_TOKEN ?? "").trim() || stored?.refreshToken;
+  const stored = readStoredSession(env, accountId);
+  const refreshToken = (!accountId ? (env.CODEX_OAUTH_REFRESH_TOKEN ?? "").trim() : "") || stored?.refreshToken;
   if (stored?.accessToken && stored.expiresAt && stored.expiresAt > Date.now() + 60_000) {
     return { accessToken: stored.accessToken, accountId: stored.accountId ?? envAccountId };
   }
@@ -261,7 +262,8 @@ export async function executeCodexOAuthChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 180_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveCodexCreds(env, fetchFn);
+  const creds = await resolveCodexCreds(env, fetchFn, accountId);
   return executeCodexOAuth(model, body, creds, { fetchFn, timeoutMs, env });
 }

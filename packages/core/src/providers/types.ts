@@ -61,6 +61,10 @@ export interface ResolvedProvider extends Omit<ProviderDef, "envKey" | "envBaseU
   baseUrl: string;
   /** all configured keys for rotation (collectKeys); [apiKey] when single */
   allKeys?: string[];
+  /** Multi-account refs attached at resolution (DB provider_accounts). */
+  accounts?: Array<{ id: string; label: string; kind: "api_key" | "session" }>;
+  /** Maps an api-key VALUE to its account id (stats attribution). */
+  keyAccounts?: Map<string, string>;
 }
 
 /** Minimal OpenAI-style chat completion request (subset we support). */

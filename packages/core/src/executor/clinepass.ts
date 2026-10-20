@@ -35,9 +35,9 @@ export const CLINEPASS_EXTRA_HEADERS: Record<string, string> = {
   "X-Title": "Cline",
 };
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "clinepass.json");
+  return join(dir, accountId ? `clinepass--${accountId}.json` : "clinepass.json");
 }
 
 export interface ClinePassCreds {
@@ -58,9 +58,9 @@ interface StoredClinePassSession {
   meta?: { authMethod?: string };
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv): StoredClinePassSession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, accountId?: string | null): StoredClinePassSession | null {
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredClinePassSession;
   } catch {
@@ -71,13 +71,14 @@ function readStoredSession(env: NodeJS.ProcessEnv): StoredClinePassSession | nul
 export async function resolveClinepassCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<ClinePassCreds> {
   const envKey = (env.CLINEPASS_API_KEY ?? "").trim();
-  if (envKey) return { accessToken: envKey, byok: true };
+  if (envKey && !accountId) return { accessToken: envKey, byok: true };
   const envToken = (env.CLINEPASS_ACCESS_TOKEN ?? "").trim();
-  if (envToken) return { accessToken: envToken, byok: false };
+  if (envToken && !accountId) return { accessToken: envToken, byok: false };
 
-  const stored = readStoredSession(env);
+  const stored = readStoredSession(env, accountId);
   if (!stored?.accessToken) {
     throw new UpstreamError(
       "auth_error",
@@ -124,8 +125,9 @@ export async function executeClinepassChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveClinepassCreds(env, fetchFn);
+  const creds = await resolveClinepassCreds(env, fetchFn, accountId);
   const url = (env.CLINEPASS_BASE_URL ?? "").trim()
     ? `${(env.CLINEPASS_BASE_URL as string).replace(/\/$/, "")}/chat/completions`
     : CLINEPASS_CHAT_URL;

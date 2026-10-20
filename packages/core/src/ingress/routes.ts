@@ -231,6 +231,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         store.logUsage({
           keyId: req.apiKey?.id ?? null,
           provider: result.providerId,
+          accountId: result.accountId ?? null,
           model: result.model,
           promptTokens: usage.prompt_tokens,
           completionTokens: usage.completion_tokens,
@@ -241,6 +242,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         inspector.record({
           keyId: req.apiKey?.id ?? null,
           provider: result.providerId,
+          accountId: result.accountId ?? null,
           model: result.model,
           strategy,
           status: "ok",
@@ -261,6 +263,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       store.logUsage({
         keyId: req.apiKey?.id ?? null,
         provider: result.providerId,
+        accountId: result.accountId ?? null,
         model: result.model,
         promptTokens: r.usage.prompt_tokens,
         completionTokens: r.usage.completion_tokens,
@@ -271,6 +274,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       inspector.record({
         keyId: req.apiKey?.id ?? null,
         provider: result.providerId,
+        accountId: result.accountId ?? null,
         model: result.model,
         strategy,
         status: "ok",
@@ -362,6 +366,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         res.end();
         store.logUsage({
           keyId: req.apiKey?.id ?? null, provider: result.providerId, model: result.model,
+          accountId: result.accountId ?? null,
           promptTokens: 0, completionTokens: outChunks, latencyMs: result.latencyMs, status: "ok", costUsd: 0,
         });
         return;
@@ -370,6 +375,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       const cost = costUsd(result.providerId, result.model, r.usage.prompt_tokens, r.usage.completion_tokens);
       store.logUsage({
         keyId: req.apiKey?.id ?? null, provider: result.providerId, model: result.model,
+        accountId: result.accountId ?? null,
         promptTokens: r.usage.prompt_tokens, completionTokens: r.usage.completion_tokens,
         latencyMs: result.latencyMs, status: "ok", costUsd: cost,
       });
@@ -434,6 +440,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       store.logUsage({
         keyId: req.apiKey?.id ?? null,
         provider: result.providerId,
+        accountId: result.accountId ?? null,
         model: result.model,
         promptTokens: out.usage.input_tokens,
         completionTokens: out.usage.output_tokens,
@@ -1082,9 +1089,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         domain = "";
       }
     }
+    const accountLabel = typeof req.body?.accountLabel === "string" ? req.body.accountLabel.trim() : "";
     const dir = sessionsDir();
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${def.id}.json`);
+    const acct = accountLabel
+      ? store.addAccount({ providerId: def.id, label: accountLabel, kind: "session" })
+      : null;
+    const file = join(dir, acct ? `${def.id}--${acct.id}.json` : `${def.id}.json`);
     const accessToken =
       typeof req.body?.accessToken === "string" && req.body.accessToken.trim()
         ? req.body.accessToken.trim()
@@ -1110,9 +1121,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     } catch {
       /* best effort */
     }
-    store.audit("session.cookie_imported", def.id, "dashboard import");
+    store.audit("session.cookie_imported", def.id, acct ? `account "${accountLabel}"` : "dashboard import");
     deps.refreshProviders?.();
-    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id), ...(acct ? { accountId: acct.id } : {}) });
   });
 
   app.delete("/api/sessions/:name", (req: Request, res: Response) => {
@@ -1137,6 +1148,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   // ---- Runtime config (dashboard Settings; persisted in SQLite) ----
   const ConfigUpdate = z.object({
     strategy: z.string().optional(),
+    account_strategy: z.string().optional(),
     pii_redact: z.boolean().optional(),
     compression_default: z.string().nullable().optional(),
     alert_webhook_url: z.string().nullable().optional(),
@@ -1151,6 +1163,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const sBudget = store.getSetting("global_budget_usd");
     return {
       strategy: { value: sStrategy && isStrategyName(sStrategy) ? sStrategy : config.strategy, source: sStrategy ? "db" : "env" },
+      account_strategy: {
+        value: (() => { const v = store.getSetting("account_strategy"); return v === "least-used" || v === "priority" || v === "random" ? v : "round-robin"; })(),
+        source: store.getSetting("account_strategy") ? "db" : "default",
+      },
       pii_redact: {
         value: sRedact === "0" ? false : sRedact === "1" ? true : redactEnabled(),
         source: sRedact ? "db" : "env",
@@ -1188,6 +1204,13 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       store.setSetting("strategy", b.strategy);
+    }
+    if (b.account_strategy !== undefined) {
+      if (!["round-robin", "least-used", "priority", "random"].includes(b.account_strategy)) {
+        res.status(400).json({ error: { message: `unknown account strategy: ${b.account_strategy}`, type: "bad_request" } });
+        return;
+      }
+      store.setSetting("account_strategy", b.account_strategy);
     }
     if (b.pii_redact !== undefined) store.setSetting("pii_redact", b.pii_redact ? "1" : "0");
     if (b.compression_default !== undefined) {
@@ -1608,6 +1631,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: { message: "key is required", type: "bad_request" } });
       return;
     }
+    const accountLabel = typeof req.body?.accountLabel === "string" ? req.body.accountLabel.trim() : "";
+    if (accountLabel) {
+      // Multi-account: store as a named account instead of THE provider key.
+      const acct = store.addAccount({ providerId: def.id, label: accountLabel, kind: "api_key", secret: key });
+      store.audit("provider.account_added", def.id, `api key account "${accountLabel}"`);
+      deps.refreshProviders?.();
+      res.json({ ok: true, connected: providers.some((p) => p.id === def.id), accountId: acct.id });
+      return;
+    }
     store.setSetting(`provider_key:${def.envKey}`, key);
     store.audit("provider.key_saved", def.id, `env ${def.envKey}`);
     deps.refreshProviders?.();
@@ -1640,30 +1672,39 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     if (typeof req.body?.userId === "string" && req.body.userId.trim()) {
       session.userId = req.body.userId.trim();
     }
+    const accountLabel = typeof req.body?.accountLabel === "string" ? req.body.accountLabel.trim() : "";
+    const acct = accountLabel
+      ? store.addAccount({ providerId: def.id, label: accountLabel, kind: "session" })
+      : null;
     const dir = sessionsDir();
     mkdirSync(dir, { recursive: true });
-    const file = join(dir, `${def.id}.json`);
+    const base = def.id === "github" ? "github-copilot" : def.id;
+    const file = join(dir, acct ? `${base}--${acct.id}.json` : `${base}.json`);
     writeFileSync(file, JSON.stringify(session, null, 2), { mode: 0o600 });
     try {
       chmodSync(file, 0o600);
     } catch {
       /* best effort */
     }
-    store.audit("oauth.token_saved", def.id, "token paste");
+    store.audit("oauth.token_saved", def.id, acct ? `account "${accountLabel}"` : "token paste");
     deps.refreshProviders?.();
-    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id), ...(acct ? { accountId: acct.id } : {}) });
   });
 
   // ---- Muse Code device login (RFC 8628 + key minting) ----
-  const museDevicePending = new Map<string, { deviceCode: string; expiresAt: number }>();
+  const museDevicePending = new Map<string, { deviceCode: string; expiresAt: number; accountLabel?: string }>();
 
-  app.post("/api/oauth/muse-code/device/start", async (_req: Request, res: Response) => {
+  app.post("/api/oauth/muse-code/device/start", async (req: Request, res: Response) => {
     try {
       const dc = await requestMuseDeviceCode(fetch);
       const state = randomUUID();
       museDevicePending.set(state, {
         deviceCode: dc.deviceCode,
         expiresAt: Date.now() + dc.expiresIn * 1000,
+        accountLabel:
+          typeof req.body?.accountLabel === "string" && req.body.accountLabel.trim()
+            ? req.body.accountLabel.trim()
+            : undefined,
       });
       res.json({
         state,
@@ -1709,7 +1750,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     } catch {
       minted = undefined;
     }
-    const session = saveMuseCodeSession(process.env, { dcaToken: r.dcaToken, minted });
+    const acct = pending.accountLabel
+      ? store.addAccount({ providerId: "muse-code", label: pending.accountLabel, kind: "session" })
+      : null;
+    const session = saveMuseCodeSession(process.env, { dcaToken: r.dcaToken, minted }, acct?.id);
     store.audit("oauth.muse_code_connected", "muse-code", session.email ?? "device login");
     deps.refreshProviders?.();
     res.json({
@@ -1718,6 +1762,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       tier: session.meta.subsTierName,
       subsActive: session.meta.isSubsActive,
       requirePayment: session.meta.requirePayment,
+      ...(acct ? { accountId: acct.id } : {}),
     });
   });
 
@@ -1750,7 +1795,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
       return;
     }
-    const file = join(sessionsDir(), `${def.id}.json`);
+    const base = def.id === "github" ? "github-copilot" : def.id;
+    const file = join(sessionsDir(), `${base}.json`);
     if (existsSync(file)) unlinkSync(file);
     store.audit("oauth.token_removed", def.id, "token disconnect");
     deps.refreshProviders?.();
@@ -1832,10 +1878,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         costUsd: 0,
         request: [{ role: "user", content: "Reply with the single word: ok" }],
         responsePreview: text.slice(0, 500),
+        accountId: result.accountId ?? null,
       });
       store.logUsage({
         keyId: null,
         provider: p.id,
+        accountId: result.accountId ?? null,
         model,
         promptTokens: result.response?.usage?.prompt_tokens ?? 0,
         completionTokens: result.response?.usage?.completion_tokens ?? 0,
@@ -1885,6 +1933,97 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     const ok = store.revokeApiKey(req.params.id);
     if (ok) store.audit("key.revoked", req.params.id);
     res.status(ok ? 200 : 404).json({ revoked: ok });
+  });
+
+  // ---- Provider accounts (multi-account) ----
+  const publicAccount = (a: ReturnType<Store["listAccounts"]>[number]) => ({
+    id: a.id,
+    providerId: a.providerId,
+    label: a.label,
+    kind: a.kind,
+    enabled: a.enabled,
+    createdAt: a.createdAt,
+    lastUsedAt: a.lastUsedAt,
+    calls: a.calls,
+    errors: a.errors,
+    lastError: a.lastError,
+  });
+
+  app.get("/api/accounts", (req: Request, res: Response) => {
+    const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
+    res.json({ accounts: store.listAccounts(provider).map(publicAccount) });
+  });
+
+  app.post("/api/accounts/:id", (req: Request, res: Response) => {
+    const patch: { label?: string; enabled?: boolean } = {};
+    if (typeof req.body?.label === "string" && req.body.label.trim()) patch.label = req.body.label.trim();
+    if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
+    const ok = store.updateAccount(req.params.id, patch);
+    if (ok) {
+      store.audit("provider.account_updated", req.params.id, JSON.stringify(patch));
+      deps.refreshProviders?.();
+    }
+    res.status(ok ? 200 : 404).json({ ok });
+  });
+
+  app.delete("/api/accounts/:id", (req: Request, res: Response) => {
+    const acct = store.getAccount(req.params.id);
+    if (!acct) {
+      res.status(404).json({ error: { message: "account not found", type: "not_found" } });
+      return;
+    }
+    if (acct.kind === "session") {
+      const base = acct.providerId === "github" ? "github-copilot" : acct.providerId;
+      const file = join(sessionsDir(), `${base}--${acct.id}.json`);
+      if (existsSync(file)) unlinkSync(file);
+    }
+    store.deleteAccount(acct.id);
+    store.audit("provider.account_deleted", acct.providerId, `account "${acct.label}"`);
+    deps.refreshProviders?.();
+    res.json({ ok: true });
+  });
+
+  // ---- Routing rules (per-model provider chains) ----
+  app.get("/api/routing-rules", (_req: Request, res: Response) => {
+    res.json({ rules: store.listRoutingRules() });
+  });
+
+  app.post("/api/routing-rules", (req: Request, res: Response) => {
+    const pattern = typeof req.body?.pattern === "string" ? req.body.pattern.trim() : "";
+    const providersIn = Array.isArray(req.body?.providers)
+      ? (req.body.providers as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+    const known = providersIn.filter((id) => deps.registry?.get(id));
+    if (!pattern || known.length === 0) {
+      res.status(400).json({
+        error: { message: "pattern and at least one known provider are required", type: "bad_request" },
+      });
+      return;
+    }
+    const strategy = typeof req.body?.strategy === "string" ? req.body.strategy : "";
+    const rule = store.addRoutingRule({ pattern, providers: known, strategy });
+    store.audit("routing.rule_added", rule.id, `${pattern} -> ${known.join(",")}`);
+    res.json({ ok: true, rule });
+  });
+
+  app.post("/api/routing-rules/:id", (req: Request, res: Response) => {
+    const patch: { pattern?: string; providers?: string[]; strategy?: string; enabled?: boolean } = {};
+    if (typeof req.body?.pattern === "string" && req.body.pattern.trim()) patch.pattern = req.body.pattern.trim();
+    if (Array.isArray(req.body?.providers)) {
+      patch.providers = (req.body.providers as unknown[])
+        .filter((x): x is string => typeof x === "string")
+        .filter((id) => deps.registry?.get(id));
+    }
+    if (typeof req.body?.strategy === "string") patch.strategy = req.body.strategy;
+    if (typeof req.body?.enabled === "boolean") patch.enabled = req.body.enabled;
+    const ok = store.updateRoutingRule(req.params.id, patch);
+    res.status(ok ? 200 : 404).json({ ok });
+  });
+
+  app.delete("/api/routing-rules/:id", (req: Request, res: Response) => {
+    const ok = store.deleteRoutingRule(req.params.id);
+    if (ok) store.audit("routing.rule_deleted", req.params.id);
+    res.status(ok ? 200 : 404).json({ ok });
   });
 
   // ---- Compression preview ----
