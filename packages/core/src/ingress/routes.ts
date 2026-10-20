@@ -1610,6 +1610,21 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       );
       const latencyMs = Date.now() - started;
       if (result.providerId !== p.id) {
+        // Dashboard tests must show up in Live/Activity like real traffic.
+        inspector.record({
+          keyId: null,
+          provider: p.id,
+          model,
+          strategy: "test",
+          status: "error",
+          latencyMs,
+          cached: false,
+          promptTokens: 0,
+          completionTokens: 0,
+          costUsd: 0,
+          request: [{ role: "user", content: "Reply with the single word: ok" }],
+          responsePreview: `fell back to ${result.providerId}`,
+        });
         res.json({
           ok: false,
           model,
@@ -1619,8 +1634,36 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         return;
       }
       const text = result.response?.choices?.[0]?.message?.content ?? "";
+      inspector.record({
+        keyId: null,
+        provider: p.id,
+        model,
+        strategy: "test",
+        status: "ok",
+        latencyMs,
+        cached: false,
+        promptTokens: result.response?.usage?.prompt_tokens ?? 0,
+        completionTokens: result.response?.usage?.completion_tokens ?? 0,
+        costUsd: 0,
+        request: [{ role: "user", content: "Reply with the single word: ok" }],
+        responsePreview: text.slice(0, 500),
+      });
       res.json({ ok: true, model, latencyMs, text: text.slice(0, 120) });
     } catch (err) {
+      inspector.record({
+        keyId: null,
+        provider: p.id,
+        model,
+        strategy: "test",
+        status: "error",
+        latencyMs: Date.now() - started,
+        cached: false,
+        promptTokens: 0,
+        completionTokens: 0,
+        costUsd: 0,
+        request: [{ role: "user", content: "Reply with the single word: ok" }],
+        responsePreview: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+      });
       res.json({
         ok: false,
         model,
