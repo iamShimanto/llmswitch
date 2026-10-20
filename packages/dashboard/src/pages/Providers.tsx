@@ -9,6 +9,33 @@ function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string>("");
   const [error, setError] = useState("");
+  const [modelTests, setModelTests] = useState<
+    Record<string, { state: "running" | "ok" | "fail"; latencyMs?: number; error?: string }>
+  >({});
+  const [testingAll, setTestingAll] = useState(false);
+
+  const testModel = async (m: string) => {
+    setModelTests((r) => ({ ...r, [m]: { state: "running" } }));
+    try {
+      const r = await api.testModel(p.id, m);
+      setModelTests((prev) => ({
+        ...prev,
+        [m]: r.ok
+          ? { state: "ok", latencyMs: r.latencyMs }
+          : { state: "fail", latencyMs: r.latencyMs, error: r.error ?? "failed" },
+      }));
+    } catch (e) {
+      setModelTests((prev) => ({ ...prev, [m]: { state: "fail", error: String(e) } }));
+    }
+  };
+
+  const testAll = async () => {
+    setTestingAll(true);
+    for (const m of models) {
+      await testModel(m);
+    }
+    setTestingAll(false);
+  };
 
   const avg = p.stats.calls > 0 ? Math.round(p.stats.totalLatencyMs / p.stats.calls) : null;
   const errRate = p.stats.calls > 0 ? (p.stats.errors / p.stats.calls) * 100 : 0;
@@ -97,19 +124,50 @@ function ProviderDetail({ p, onBack }: { p: ProviderInfo; onBack: () => void }) 
         ))}
       </div>
 
-      <h2 className="mb-3 font-semibold">Models ({models.length})</h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-semibold">Models ({models.length})</h2>
+        {models.length > 0 && (
+          <button
+            onClick={testAll}
+            disabled={testingAll}
+            className="rounded-lg border border-zinc-700 px-3 py-1 text-xs hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {testingAll ? "Testing…" : "Test all models"}
+          </button>
+        )}
+      </div>
       <div className={card}>
         {models.length === 0 ? (
           <p className="text-sm text-zinc-500">
             No models listed — this provider passes model ids through. Use{" "}
             <code className="rounded bg-zinc-800 px-1 text-xs">{p.id}:&lt;model&gt;</code>{t("providers.discoverAbove")}</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {models.map((m) => (
-              <span key={m} className="rounded-lg bg-zinc-800 px-2.5 py-1 font-mono text-xs text-zinc-200">
-                {m}
-              </span>
-            ))}
+          <div className="divide-y divide-zinc-800">
+            {models.map((m) => {
+              const r = modelTests[m];
+              return (
+                <div key={m} className="flex items-center gap-3 py-2">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200" title={m}>
+                    {m}
+                  </span>
+                  {r?.state === "ok" && (
+                    <span className="shrink-0 text-xs text-emerald-400">✓ works · {r.latencyMs} ms</span>
+                  )}
+                  {r?.state === "fail" && (
+                    <span className="max-w-56 shrink-0 truncate text-xs text-red-400" title={r.error}>
+                      ✗ {r.error}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => testModel(m)}
+                    disabled={r?.state === "running"}
+                    className="shrink-0 rounded-lg bg-zinc-800 px-3 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
+                  >
+                    {r?.state === "running" ? "Testing…" : "Test"}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

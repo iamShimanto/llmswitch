@@ -1264,6 +1264,48 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     );
   });
 
+  // Per-model live test (Providers page): pins provider:model, tiny prompt,
+  // truthful result — a silent fallback to another provider counts as fail.
+  app.post("/api/providers/:id/test", async (req: Request, res: Response) => {
+    const p = providers.find((x) => x.id === req.params.id);
+    if (!p) {
+      res.status(404).json({ error: { message: "provider not found", type: "not_found" } });
+      return;
+    }
+    const model =
+      typeof req.body?.model === "string" && req.body.model ? req.body.model : p.defaultModel;
+    const started = Date.now();
+    try {
+      const result = await router.route(
+        {
+          model: `${p.id}:${model}`,
+          messages: [{ role: "user", content: "Reply with the single word: ok" }],
+          max_tokens: 16,
+        },
+        { strategy: "priority", bypassCache: true, timeoutMs: 45_000 },
+      );
+      const latencyMs = Date.now() - started;
+      if (result.providerId !== p.id) {
+        res.json({
+          ok: false,
+          model,
+          latencyMs,
+          error: `provider ${p.id} failed — request fell back to ${result.providerId}`,
+        });
+        return;
+      }
+      const text = result.response?.choices?.[0]?.message?.content ?? "";
+      res.json({ ok: true, model, latencyMs, text: text.slice(0, 120) });
+    } catch (err) {
+      res.json({
+        ok: false,
+        model,
+        latencyMs: Date.now() - started,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   app.get("/api/usage", (req: Request, res: Response) => {
     const hours = Number(req.query.hours ?? 24);
     res.json(store.usageSummary(Date.now() - hours * 3600_000));
