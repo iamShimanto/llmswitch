@@ -57,6 +57,8 @@ export interface ProviderDef {
 
 /** A provider with credentials resolved from the environment. */
 export interface ResolvedProvider extends Omit<ProviderDef, "envKey" | "envBaseUrl"> {
+  /** request params stripped before sending (dashboard Param Filters) */
+  blockedParams?: string[];
   apiKey: string;
   baseUrl: string;
   /** all configured keys for rotation (collectKeys); [apiKey] when single */

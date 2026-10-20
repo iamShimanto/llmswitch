@@ -18,6 +18,8 @@ function AccountsSection({ p, onChanged }: { p: ProviderInfo; onChanged: () => v
   const [extra, setExtra] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [acctQuery, setAcctQuery] = useState("");
+  const [acctFilter, setAcctFilter] = useState<"all" | "active" | "error">("all");
 
   const load = () => {
     api.accounts(p.id).then((r) => setAccounts(r.accounts)).catch(() => {});
@@ -80,8 +82,45 @@ function AccountsSection({ p, onChanged }: { p: ProviderInfo; onChanged: () => v
         (the fallback). Selection strategy lives on the Routing page.
       </p>
       {accounts.length > 0 && (
-        <div className="mt-3 space-y-2">
-          {accounts.map((a) => (
+        <>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              value={acctQuery}
+              onChange={(e) => setAcctQuery(e.target.value)}
+              placeholder="🔍 Search accounts…"
+              className="min-w-40 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-sm"
+            />
+            {(
+              [
+                ["all", "All"],
+                ["active", "Active"],
+                ["error", "Error"],
+              ] as Array<["all" | "active" | "error", string]>
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setAcctFilter(id)}
+                className={`rounded-full border px-3 py-1 text-xs ${
+                  acctFilter === id
+                    ? "border-zinc-500 bg-zinc-800 font-semibold text-white"
+                    : "border-zinc-800 text-zinc-400 hover:text-white"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="text-xs text-zinc-500">{accounts.length} accounts</span>
+          </div>
+          <div className="mt-3 space-y-2">
+          {accounts
+            .filter((a) => {
+              const q = acctQuery.trim().toLowerCase();
+              if (q && !a.label.toLowerCase().includes(q)) return false;
+              if (acctFilter === "active" && !a.enabled) return false;
+              if (acctFilter === "error" && !(a.errors > 0 || a.lastError)) return false;
+              return true;
+            })
+            .map((a) => (
             <div key={a.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2">
               <span className="text-sm font-medium">{a.label}</span>
               <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
@@ -108,7 +147,8 @@ function AccountsSection({ p, onChanged }: { p: ProviderInfo; onChanged: () => v
               </span>
             </div>
           ))}
-        </div>
+          </div>
+        </>
       )}
       {canAddHere ? (
         <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -157,12 +197,14 @@ function ProviderDetail({
   p,
   connected,
   envKey,
+  entry,
   onBack,
   onChanged,
 }: {
   p: ProviderInfo;
   connected: boolean;
   envKey?: string;
+  entry?: CatalogEntry;
   onBack: () => void;
   onChanged: () => void;
 }) {
@@ -271,6 +313,61 @@ function ProviderDetail({
     Record<string, { state: "running" | "ok" | "fail"; latencyMs?: number; error?: string }>
   >({});
   const [testingAll, setTestingAll] = useState(false);
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(
+    () => new Set(entry?.hiddenModels ?? []),
+  );
+  const [modelQuery, setModelQuery] = useState("");
+  const [visFilter, setVisFilter] = useState<"all" | "visible" | "hidden">("all");
+  const [customId, setCustomId] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [paramBlock, setParamBlock] = useState(entry?.blockedParams ?? "");
+  const [connCount, setConnCount] = useState(connected ? 1 : 0);
+  useEffect(() => {
+    setModels(entry?.models ?? p.models);
+    setHiddenModels(new Set(entry?.hiddenModels ?? []));
+    setParamBlock(entry?.blockedParams ?? "");
+  }, [entry]);
+  useEffect(() => {
+    api
+      .accounts(p.id)
+      .then((r) => setConnCount((connected ? 1 : 0) + r.accounts.filter((a) => a.enabled).length))
+      .catch(() => {});
+  }, [p.id, connected]);
+
+  const toggleVisibility = async (m: string) => {
+    const hidden = !hiddenModels.has(m);
+    try {
+      const r = await api.setModelVisibility(p.id, m, hidden);
+      setHiddenModels(new Set(r.hiddenModels));
+      onChanged();
+    } catch {
+      /* ignore */
+    }
+  };
+  const customNames = new Map((entry?.customModels ?? []).map((c) => [c.id, c.name]));
+  const isCustom = (m: string) => customNames.has(m);
+  const displayName = (m: string) =>
+    customNames.get(m) ??
+    m
+      .split("/")
+      .pop()!
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, (ch) => ch.toUpperCase());
+  const addCustom = async () => {
+    if (!customId.trim()) return;
+    await api.saveCustomModel(p.id, customId.trim(), customName.trim() || undefined).catch(() => {});
+    setCustomId("");
+    setCustomName("");
+    onChanged();
+  };
+  const removeCustom = async (m: string) => {
+    await api.saveCustomModel(p.id, m, undefined, true).catch(() => {});
+    onChanged();
+  };
+  const saveParamBlock = async () => {
+    await api.setParamBlock(p.id, paramBlock).catch(() => {});
+    onChanged();
+  };
 
   const testModel = async (m: string) => {
     setModelTests((r) => ({ ...r, [m]: { state: "running" } }));
@@ -290,6 +387,7 @@ function ProviderDetail({
   const testAll = async () => {
     setTestingAll(true);
     for (const m of models) {
+      if (hiddenModels.has(m)) continue;
       await testModel(m);
     }
     setTestingAll(false);
@@ -347,6 +445,7 @@ function ProviderDetail({
           </div>
           <p className="mt-1 text-xs text-zinc-500">
             {p.id} · {p.wireFormat} · default: {p.defaultModel}
+            {connected ? ` · ${connCount} connection${connCount === 1 ? "" : "s"}` : ""}
           </p>
         </div>
         <div className="flex gap-2">
@@ -455,6 +554,29 @@ function ProviderDetail({
             )
           ) : p.authType === "cookie" ? (
             <>
+              <div className="mb-4 rounded-xl border border-violet-900/60 bg-violet-950/20 p-4">
+                <h3 className="mb-1 font-semibold">🍪 How to get the session credential</h3>
+                <p className="mb-2 text-sm text-zinc-400">
+                  {p.name} uses a browser web session instead of an API key.
+                </p>
+                <ol className="list-decimal space-y-1.5 pl-5 text-sm text-zinc-400">
+                  <li>Sign in to {p.name} in your browser.</li>
+                  <li>
+                    Fast path: install a cookie-export extension (e.g. Cookie Editor), open it
+                    on the {p.name} tab, and export with the format set to "Cookie header".
+                  </li>
+                  <li>
+                    Manual path: open DevTools (F12 → Network), refresh, open any authenticated
+                    request, and copy the <b>Cookie</b> header value from Request Headers —
+                    without the "Cookie:" prefix.
+                  </li>
+                  <li>Paste it below and check the connection. If it stops working, sign in again and replace it with a fresh value.</li>
+                </ol>
+                <p className="mt-2 text-xs font-medium text-amber-300">
+                  Treat this like a password: it can access your signed-in web account until it
+                  expires or is revoked.
+                </p>
+              </div>
               <div className="mb-3 flex flex-wrap items-center gap-3">
                 <button
                   onClick={() => {
@@ -522,6 +644,28 @@ function ProviderDetail({
         </div>
       )}
 
+      <div className={`${card} mb-4`}>
+        <h2 className="font-semibold">Multi-account routing</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Override the global account strategy for this provider only.
+        </p>
+        <label className="mb-1 mt-3 block text-xs font-medium text-zinc-400">Account strategy</label>
+        <select
+          value={entry?.accountStrategy ?? ""}
+          onChange={async (e) => {
+            await api.setProviderAccountStrategy(p.id, e.target.value).catch(() => {});
+            onChanged();
+          }}
+          className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+        >
+          <option value="">Global default (Routing page)</option>
+          <option value="round-robin">round-robin</option>
+          <option value="least-used">least-used</option>
+          <option value="priority">priority</option>
+          <option value="random">random</option>
+        </select>
+      </div>
+
       <AccountsSection p={p} onChanged={onChanged} />
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
@@ -538,8 +682,13 @@ function ProviderDetail({
         ))}
       </div>
 
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold">Models ({models.length})</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">
+          Available Models{" "}
+          <span className="text-sm font-normal text-zinc-500">
+            {models.length - hiddenModels.size}/{models.length} active
+          </span>
+        </h2>
         {models.length > 0 && (
           <button
             onClick={testAll}
@@ -550,6 +699,55 @@ function ProviderDetail({
           </button>
         )}
       </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={modelQuery}
+          onChange={(e) => setModelQuery(e.target.value)}
+          placeholder="🔍 Filter models…"
+          className="min-w-44 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm"
+        />
+        {(
+          [
+            ["all", "All"],
+            ["visible", "Visible only"],
+            ["hidden", "Hidden only"],
+          ] as Array<["all" | "visible" | "hidden", string]>
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setVisFilter(id)}
+            className={`rounded-full border px-3 py-1 text-xs ${
+              visFilter === id
+                ? "border-zinc-500 bg-zinc-800 font-semibold text-white"
+                : "border-zinc-800 text-zinc-400 hover:text-white"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          onClick={async () => {
+            for (const m of models) {
+              if (!hiddenModels.has(m)) await api.setModelVisibility(p.id, m, true).catch(() => {});
+            }
+            onChanged();
+          }}
+          className="rounded-full border border-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:text-white"
+        >
+          Hide all
+        </button>
+        <button
+          onClick={async () => {
+            for (const m of [...hiddenModels]) {
+              await api.setModelVisibility(p.id, m, false).catch(() => {});
+            }
+            onChanged();
+          }}
+          className="rounded-full border border-zinc-800 px-3 py-1 text-xs text-zinc-400 hover:text-white"
+        >
+          Show all
+        </button>
+      </div>
       <div className={card}>
         {models.length === 0 ? (
           <p className="text-sm text-zinc-500">
@@ -557,13 +755,46 @@ function ProviderDetail({
             <code className="rounded bg-zinc-800 px-1 text-xs">{p.id}:&lt;model&gt;</code>{t("providers.discoverAbove")}</p>
         ) : (
           <div className="divide-y divide-zinc-800">
-            {models.map((m) => {
+            {models
+              .filter((m) => {
+                const q = modelQuery.trim().toLowerCase();
+                if (q && !m.toLowerCase().includes(q)) return false;
+                if (visFilter === "visible" && hiddenModels.has(m)) return false;
+                if (visFilter === "hidden" && !hiddenModels.has(m)) return false;
+                return true;
+              })
+              .map((m) => {
               const r = modelTests[m];
+              const hidden = hiddenModels.has(m);
               return (
-                <div key={m} className="flex items-center gap-3 py-2">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-zinc-200" title={m}>
-                    {m}
+                <div key={m} className={`flex items-center gap-3 py-2 ${hidden ? "opacity-50" : ""}`}>
+                  <span className="min-w-0 flex-1" title={m}>
+                    <span className="block truncate font-mono text-xs text-zinc-200">
+                      {p.id}/{m}
+                    </span>
+                    <span className="mt-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <span className="truncate italic">{displayName(m)}</span>
+                      {isCustom(m) ? (
+                        <span className="shrink-0 rounded bg-amber-900/60 px-1.5 py-px text-[10px] font-semibold text-amber-300">CUSTOM</span>
+                      ) : (
+                        <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-px text-[10px] font-semibold text-zinc-400">BUILT-IN</span>
+                      )}
+                    </span>
                   </span>
+                  <button
+                    onClick={() => void navigator.clipboard?.writeText(`${p.id}:${m}`).catch(() => {})}
+                    title="Copy model id"
+                    className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] hover:bg-zinc-800"
+                  >
+                    ⧉
+                  </button>
+                  <button
+                    onClick={() => toggleVisibility(m)}
+                    title={hidden ? "Show model (include in routing)" : "Hide model (remove from routing)"}
+                    className="shrink-0 rounded border border-zinc-700 px-1.5 py-0.5 text-[11px] hover:bg-zinc-800"
+                  >
+                    {hidden ? "🙈" : "👁"}
+                  </button>
                   {m === defaultModel && (
                     <span className="shrink-0 rounded-full bg-amber-900/60 px-2 py-0.5 text-[11px] font-medium text-amber-300">Default</span>
                   )}
@@ -597,6 +828,75 @@ function ProviderDetail({
           </div>
         )}
       </div>
+      <div className={`${card} mt-4`}>
+        <h2 className="font-semibold">Custom Models</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Add model IDs that are not in the default list. They become available for routing.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            value={customId}
+            onChange={(e) => setCustomId(e.target.value)}
+            placeholder="Model ID — e.g. gpt-4.1-mini"
+            className="min-w-44 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <input
+            value={customName}
+            onChange={(e) => setCustomName(e.target.value)}
+            placeholder="Display name (optional)"
+            className="min-w-36 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <button
+            onClick={addCustom}
+            disabled={!customId.trim()}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+          >
+            + Add
+          </button>
+        </div>
+        {(entry?.customModels ?? []).length === 0 ? (
+          <p className="mt-3 text-sm text-zinc-500">No custom models added yet.</p>
+        ) : (
+          <div className="mt-3 grid gap-1.5">
+            {(entry?.customModels ?? []).map((c) => (
+              <p key={c.id} className="flex items-center justify-between rounded-lg border border-zinc-800 px-3 py-1.5 font-mono text-xs">
+                <span>
+                  {c.id}
+                  {c.name ? <span className="ml-2 font-sans italic text-zinc-500">{c.name}</span> : null}
+                </span>
+                <button onClick={() => removeCustom(c.id)} className="text-red-400 hover:text-red-300">
+                  ✕
+                </button>
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className={`${card} mt-4`}>
+        <h2 className="font-semibold">Param Filters</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Strip or block request parameters before sending to this provider — used to avoid
+          400 errors from providers that reject certain params (e.g. NVIDIA NIM rejects{" "}
+          <code className="rounded bg-zinc-800 px-1">thinking</code>).
+        </p>
+        <label className="mb-1 mt-3 block text-xs font-medium text-zinc-400">Blocked parameters</label>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={paramBlock}
+            onChange={(e) => setParamBlock(e.target.value)}
+            placeholder="thinking, reasoning_budget, … (comma-separated)"
+            className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+          />
+          <button
+            onClick={saveParamBlock}
+            className="rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
       <p className="mt-4 text-xs text-zinc-500">{t("providers.addressModel")}<code className="rounded bg-zinc-800 px-1">{p.id}:&lt;model-id&gt;</code>{t("providers.inThe")}<code className="rounded bg-zinc-800 px-1">{t("providers.modelField")}</code>{t("providers.fieldFrag")}</p>
     </div>
   );
@@ -954,14 +1254,40 @@ function OAuthConnectPanel() {
 }
 
 
+const CATEGORIES: Array<{ id: string; title: string; desc: string; dot: string }> = [
+  { id: "api-key", title: "API Key Providers", desc: "Classic API-key providers — paste a key to connect.", dot: "bg-amber-400" },
+  { id: "oauth", title: "OAuth Providers", desc: "Providers authenticated via OAuth — sign in once and tokens rotate automatically.", dot: "bg-blue-400" },
+  { id: "cookie", title: "Web Cookie Providers", desc: "These providers use browser web sessions, cookies, or web tokens instead of API keys.", dot: "bg-violet-400" },
+  { id: "none", title: "Free / Keyless Providers", desc: "No key needed — public endpoints and anonymous free tiers.", dot: "bg-emerald-400" },
+];
+const categoryOf = (c: CatalogEntry): string =>
+  c.authType === "token-import" ? "oauth" : c.authType === "env-creds" ? "api-key" : c.authType;
+
+const MEDIA_KINDS: Array<{ id: string; label: string; re: RegExp }> = [
+  { id: "image", label: "🖼 Image", re: /dall-e|flux|imagen|stable|sdxl|image|midjourney/i },
+  { id: "video", label: "🎬 Video", re: /veo|sora|video|kling|runway|luma/i },
+  { id: "music", label: "🎵 Music", re: /music|suno|udio/i },
+  { id: "tts", label: "🗣 Text → Speech", re: /tts|text-to-speech|speech(?!-to-text)/i },
+  { id: "stt", label: "🎙 Speech → Text", re: /whisper|speech-to-text|transcri/i },
+  { id: "embedding", label: "🧬 Embedding", re: /embed/i },
+];
+
 function DirectoryCard({
   c,
   live,
+  accountCount,
+  compact,
+  matchedModel,
   onOpen,
+  onChanged,
 }: {
   c: CatalogEntry;
   live: ProviderInfo | undefined;
+  accountCount: number;
+  compact: boolean;
+  matchedModel?: string;
   onOpen: () => void;
+  onChanged: () => void;
 }) {
   const { t } = useLang();
   const [testState, setTestState] = useState<{ running: boolean; msg?: string; ok?: boolean }>({ running: false });
@@ -975,30 +1301,78 @@ function DirectoryCard({
       setTestState({ running: false, ok: false, msg: `✗ ${String(err)}` });
     }
   };
+  const toggleEnabled = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    await api.setProviderEnabled(c.id, !c.enabled).catch(() => {});
+    onChanged();
+  };
+  const off = !c.disabled && c.enabled === false;
+  const connections = live ? 1 + accountCount : 0;
+  const statusBadge = c.disabled ? (
+    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Unavailable</span>
+  ) : off ? (
+    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">⏸ Disabled</span>
+  ) : live ? (
+    c.authType === "none" ? (
+      <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
+    ) : (
+      <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">
+        ● {connections} Connected
+      </span>
+    )
+  ) : (
+    <span className="text-xs text-zinc-500">No connections</span>
+  );
+  const toggle = !c.disabled && (
+    <button
+      onClick={toggleEnabled}
+      title={c.enabled ? "Disable provider (leaves rotation, stays connected)" : "Enable provider"}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition ${c.enabled ? "bg-emerald-600" : "bg-zinc-700"}`}
+    >
+      <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${c.enabled ? "left-[18px]" : "left-0.5"}`} />
+    </button>
+  );
+
+  if (compact) {
+    return (
+      <div
+        onClick={onOpen}
+        className={`flex min-w-0 cursor-pointer items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 transition-colors hover:border-zinc-600 ${off ? "opacity-60" : ""}`}
+      >
+        <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{c.name}</h2>
+        {statusBadge}
+        {toggle}
+        {live && (
+          <button
+            onClick={runTest}
+            disabled={testState.running}
+            className="rounded-lg bg-zinc-800 px-2.5 py-1 text-xs font-medium hover:bg-zinc-700 disabled:opacity-50"
+          >
+            {testState.running ? "…" : "▶ Test"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const connectable = !c.disabled && !live && c.authType !== "none";
   return (
     <div
       onClick={onOpen}
-      className="min-w-0 w-full cursor-pointer overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600"
+      className={`min-w-0 w-full cursor-pointer overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left transition-colors hover:border-zinc-600 ${off ? "opacity-60" : ""}`}
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="min-w-0 truncate font-semibold">{c.name}</h2>
-        {c.disabled ? (
-          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Unavailable</span>
-        ) : live ? (
-          c.authType === "none" ? (
-            <span className="rounded-full bg-sky-900 px-2 py-0.5 text-xs text-sky-300">{t("providers.keylessBadge")}</span>
-          ) : (
-            <span className="rounded-full bg-emerald-900 px-2 py-0.5 text-xs text-emerald-300">{t("common.connected")}</span>
-          )
-        ) : (
-          <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">Not connected</span>
-        )}
+        {statusBadge}
       </div>
       <p className="mt-1 text-xs text-zinc-500">
         {c.id} · {c.authType} · {c.models.length} models · default: {c.defaultModel}
       </p>
-      <p className="mt-2 truncate text-sm text-zinc-400">{c.models.slice(0, 4).join(", ")}</p>
+      {matchedModel ? (
+        <p className="mt-2 truncate text-sm text-amber-300/90">🎯 {matchedModel}</p>
+      ) : (
+        <p className="mt-2 truncate text-sm text-zinc-400">{c.models.slice(0, 4).join(", ")}</p>
+      )}
       <div className="mt-3 flex items-center gap-2">
         {connectable && (
           <button
@@ -1017,9 +1391,10 @@ function DirectoryCard({
             disabled={testState.running}
             className="rounded-lg bg-zinc-800 px-4 py-1.5 text-sm font-medium hover:bg-zinc-700 disabled:opacity-50"
           >
-            {testState.running ? "Testing…" : "Test"}
+            {testState.running ? "Testing…" : "▶ Test"}
           </button>
         )}
+        {toggle}
         <span className="text-xs text-sky-400">{t("providers.detailsArrow")}</span>
         {live && testState.msg && (
           <span
@@ -1052,12 +1427,19 @@ export default function Providers() {
     else sessionStorage.removeItem("llmswitch_provider_detail");
   }, [selectedId]);
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
+  const [modelQuery, setModelQuery] = useState("");
+  const [category, setCategory] = useState("all");
+  const [configuredOnly, setConfiguredOnly] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const [media, setMedia] = useState<string | null>(null);
+  const [allAccounts, setAllAccounts] = useState<ProviderAccount[]>([]);
+  const [sectionTests, setSectionTests] = useState<Record<string, { running: boolean; msg?: string }>>({});
   const [error, setError] = useState("");
 
   const load = () => {
     api.providers().then(setProviders).catch((e) => setError(String(e)));
     api.catalog().then(setCatalog).catch(() => undefined);
+    api.accounts().then((r) => setAllAccounts(r.accounts)).catch(() => undefined);
   };
   useEffect(load, []);
 
@@ -1083,30 +1465,62 @@ export default function Providers() {
         p={info}
         connected={Boolean(selectedConnected)}
         envKey={selectedEntry?.envKey}
+        entry={selectedEntry}
         onBack={() => setSelectedId(null)}
         onChanged={load}
       />
     );
   }
 
+  const accountCountByProvider = new Map<string, number>();
+  for (const a of allAccounts) {
+    if (a.enabled) accountCountByProvider.set(a.providerId, (accountCountByProvider.get(a.providerId) ?? 0) + 1);
+  }
+
   const q = query.trim().toLowerCase();
-  const entries = [...catalog]
-    .sort((a, b) => Number(b.connected) - Number(a.connected) || a.name.localeCompare(b.name))
-    .filter((c) => {
-      if (filter === "connected" && !c.connected) return false;
-      if (filter === "disconnected" && c.connected) return false;
-      if (filter !== "all" && filter !== "connected" && filter !== "disconnected" && c.authType !== filter)
-        return false;
-      return (
-        !q ||
-        c.name.toLowerCase().includes(q) ||
-        c.id.toLowerCase().includes(q) ||
-        c.models.some((m) => m.toLowerCase().includes(q))
-      );
-    });
+  const mq = modelQuery.trim().toLowerCase();
+  const mediaKind = MEDIA_KINDS.find((k) => k.id === media);
+  const matches = (c: CatalogEntry): boolean => {
+    if (configuredOnly && !c.connected) return false;
+    if (mq && !c.models.some((m) => m.toLowerCase().includes(mq))) return false;
+    if (mediaKind && !c.models.some((m) => mediaKind.re.test(m))) return false;
+    return (
+      !q ||
+      c.name.toLowerCase().includes(q) ||
+      c.id.toLowerCase().includes(q) ||
+      c.models.some((m) => m.toLowerCase().includes(q))
+    );
+  };
+  const sorted = [...catalog].sort(
+    (a, b) => Number(b.connected) - Number(a.connected) || a.name.localeCompare(b.name),
+  );
+  const visibleCount = sorted.filter(matches).length;
+
+  const testSection = async (catId: string, entriesInSection: CatalogEntry[]) => {
+    const targets = entriesInSection.filter((c) => c.connected);
+    if (targets.length === 0) return;
+    setSectionTests((s) => ({ ...s, [catId]: { running: true } }));
+    let ok = 0;
+    for (const c of targets) {
+      const r = await api.testModel(c.id, c.defaultModel).catch(() => null);
+      if (r?.ok) ok++;
+    }
+    setSectionTests((s) => ({
+      ...s,
+      [catId]: { running: false, msg: `✓ ${ok}/${targets.length} passed` },
+    }));
+  };
+
+  const chip = (active: boolean) =>
+    `rounded-full border px-3 py-1 text-xs ${
+      active
+        ? "border-amber-600/60 bg-amber-950/40 font-semibold text-amber-200"
+        : "border-zinc-800 text-zinc-400 hover:text-white"
+    }`;
 
   return (
     <div>
+      <p className="mb-1 text-xs text-zinc-500">Dashboard › <span className="text-zinc-300">Providers</span></p>
       <h1 className="mb-6 text-2xl font-bold">{t("nav.providers")}</h1>
       {error && <p className="mb-4 text-red-400">{error}</p>}
       <OAuthConnectPanel />
@@ -1114,46 +1528,102 @@ export default function Providers() {
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search providers or models…"
-          className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+          placeholder="🔍 Search Providers"
+          className="min-w-48 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
         />
-        <p className="text-sm text-zinc-500">
-          {providers.length} connected · {catalog.length} total
-        </p>
+        <input
+          value={modelQuery}
+          onChange={(e) => setModelQuery(e.target.value)}
+          placeholder="🧠 Search by model…"
+          className="min-w-48 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm"
+        />
       </div>
-      <div className="mb-4 flex flex-wrap gap-1.5">
-        {(
-          [
-            ["all", "All"],
-            ["connected", "Connected"],
-            ["disconnected", "Not connected"],
-            ["api-key", "API key"],
-            ["oauth", "OAuth"],
-            ["none", "Keyless"],
-            ["cookie", "Cookie / web"],
-          ] as Array<[string, string]>
-        ).map(([id, label]) => (
+      {/* Category stat chips */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        <button onClick={() => setCategory("all")} className={chip(category === "all")}>
+          Total {providers.length}/{catalog.length}
+        </button>
+        {CATEGORIES.map((cat) => {
+          const all = catalog.filter((c) => categoryOf(c) === cat.id);
+          const conn = all.filter((c) => c.connected).length;
+          return (
+            <button
+              key={cat.id}
+              onClick={() => setCategory(category === cat.id ? "all" : cat.id)}
+              className={chip(category === cat.id)}
+            >
+              <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${cat.dot}`} />
+              {cat.title.replace(" Providers", "")} {conn}/{all.length}
+            </button>
+          );
+        })}
+        <button onClick={() => setConfiguredOnly((v) => !v)} className={chip(configuredOnly)}>
+          ✓ Configured
+        </button>
+        <button onClick={() => setCompact((v) => !v)} className={chip(compact)}>
+          ▦ Compact
+        </button>
+      </div>
+      {/* Media kinds (derived from model ids) */}
+      <div className="mb-5 flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Media</span>
+        {MEDIA_KINDS.map((k) => (
           <button
-            key={id}
-            onClick={() => setFilter(id)}
-            className={`rounded-full border px-3 py-1 text-xs ${
-              filter === id
-                ? "border-zinc-500 bg-zinc-800 font-semibold text-white"
-                : "border-zinc-800 text-zinc-400 hover:text-white"
-            }`}
+            key={k.id}
+            onClick={() => setMedia(media === k.id ? null : k.id)}
+            className={chip(media === k.id)}
           >
-            {label}
+            {k.label}
           </button>
         ))}
+        <span className="ml-auto text-sm text-zinc-500">
+          {visibleCount} shown · {providers.length} connected · {catalog.length} total
+        </span>
       </div>
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {entries.map((c) => (
-          <DirectoryCard key={c.id} c={c} live={connectedById.get(c.id)} onOpen={() => setSelectedId(c.id)} />
-        ))}
-      </div>
-      {entries.length === 0 && (
-        <p className="text-zinc-400">No providers match your search.</p>
-      )}
+
+      {CATEGORIES.filter((cat) => category === "all" || category === cat.id).map((cat) => {
+        const inSection = sorted.filter((c) => categoryOf(c) === cat.id && matches(c));
+        if (inSection.length === 0) return null;
+        const conn = inSection.filter((c) => c.connected).length;
+        const st = sectionTests[cat.id];
+        return (
+          <section key={cat.id} className="mb-8">
+            <div className="mb-1 flex flex-wrap items-center gap-3">
+              <h2 className="flex items-center gap-2 text-lg font-bold">
+                {cat.title}
+                <span className={`h-2 w-2 rounded-full ${cat.dot}`} />
+                <span className="text-sm font-medium text-amber-400">
+                  {conn}/{inSection.length}
+                </span>
+              </h2>
+              <button
+                onClick={() => testSection(cat.id, inSection)}
+                disabled={st?.running || conn === 0}
+                className="ml-auto rounded-lg border border-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-800 disabled:opacity-50"
+              >
+                {st?.running ? "Testing…" : "▶ Test All"}
+              </button>
+              {st?.msg && <span className="text-xs text-emerald-400">{st.msg}</span>}
+            </div>
+            <p className="mb-3 text-xs text-zinc-500">{cat.desc}</p>
+            <div className={compact ? "grid gap-2" : "grid gap-4 md:grid-cols-2 lg:grid-cols-3"}>
+              {inSection.map((c) => (
+                <DirectoryCard
+                  key={c.id}
+                  c={c}
+                  live={connectedById.get(c.id)}
+                  accountCount={accountCountByProvider.get(c.id) ?? 0}
+                  compact={compact}
+                  matchedModel={mq ? c.models.find((m) => m.toLowerCase().includes(mq)) : undefined}
+                  onOpen={() => setSelectedId(c.id)}
+                  onChanged={load}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+      {visibleCount === 0 && <p className="text-zinc-400">No providers match your search.</p>}
     </div>
   );
 }

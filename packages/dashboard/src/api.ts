@@ -10,6 +10,11 @@ export interface CatalogEntry {
   defaultModel: string;
   connected: boolean;
   disabled: boolean;
+  enabled: boolean;
+  hiddenModels: string[];
+  customModels: Array<{ id: string; name?: string }>;
+  accountStrategy: string | null;
+  blockedParams: string;
 }
 
 export interface ProviderInfo {
@@ -253,6 +258,31 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
   autoCatalog: () => req<{ templates: AutoTemplateInfo[] }>("/api/combos/auto-catalog"),
+  setProviderEnabled: (id: string, enabled: boolean) =>
+    req<{ ok: boolean; enabled: boolean }>(`/api/providers/${id}/enabled`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+  setProviderAccountStrategy: (id: string, strategy: string) =>
+    req<{ ok: boolean }>(`/api/providers/${id}/account-strategy`, {
+      method: "POST",
+      body: JSON.stringify({ strategy }),
+    }),
+  setModelVisibility: (id: string, model: string, hidden: boolean) =>
+    req<{ ok: boolean; hiddenModels: string[] }>(`/api/providers/${id}/models/visibility`, {
+      method: "POST",
+      body: JSON.stringify({ model, hidden }),
+    }),
+  saveCustomModel: (id: string, model: string, name?: string, remove = false) =>
+    req<{ ok: boolean; customModels: Array<{ id: string; name?: string }> }>(
+      `/api/providers/${id}/models/custom`,
+      { method: "POST", body: JSON.stringify({ model, name, remove }) },
+    ),
+  setParamBlock: (id: string, params: string) =>
+    req<{ ok: boolean }>(`/api/providers/${id}/param-block`, {
+      method: "POST",
+      body: JSON.stringify({ params }),
+    }),
   setDefaultModel: (id: string, model: string) =>
     req<{ ok: boolean; defaultModel: string }>(`/api/providers/${id}/default-model`, {
       method: "POST",
