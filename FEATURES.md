@@ -565,3 +565,14 @@ verdict. The loop now keeps the first real-account error and prefers
 it when giving up. (Live case: the owner's Antigravity image quota
 was exhausted by gateway testing; the dashboard showed a 502
 "no session" — the account page's lastError held the true 429.)
+
+## Media passthrough pin-strip + friendlier failures (2026-10-21)
+- passthroughJson now strips the "provider:" pin prefix from the
+  forwarded model id — Pollinations rejected pinned ids verbatim
+  ("Invalid model or alias: pollinations:flux"). This unbreaks every
+  pinned media/embeddings/rerank passthrough, not just images.
+- NVIDIA genai branch: timeout 240s → 90s (Cloudflare gives up
+  ~100s anyway) with a clear "free image queue overloaded" message
+  instead of a raw abort / proxy 524 page.
+- Media page: HTML error pages (Cloudflare 502/524) are rendered as
+  a one-line friendly message with the page title, never raw HTML.

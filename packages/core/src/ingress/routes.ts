@@ -595,11 +595,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       });
       return;
     }
+    // Pinned "provider:model" requests: upstreams want the bare model
+    // id, not our pin syntax (Pollinations 400s on the prefix).
+    let forwardBody = upstreamBody;
+    if (forwardBody && typeof forwardBody === "object") {
+      const m = (forwardBody as { model?: unknown }).model;
+      if (typeof m === "string" && m.startsWith(`${p.id}:`)) {
+        forwardBody = { ...(forwardBody as Record<string, unknown>), model: m.slice(p.id.length + 1) };
+      }
+    }
     try {
       const upstream = await fetch(`${p.baseUrl}${upstreamPath}`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${p.apiKey}` },
-        body: JSON.stringify(upstreamBody),
+        body: JSON.stringify(forwardBody),
         signal: AbortSignal.timeout(120_000),
       });
       const text = await upstream.text();
@@ -705,7 +714,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${p.apiKey}` },
             body: JSON.stringify({ prompt: String(req.body.prompt), width, height, steps: 4, seed: 0 }),
-            signal: AbortSignal.timeout(240_000),
+            signal: AbortSignal.timeout(90_000),
           });
           const text = await upstream.text();
           if (!upstream.ok) {
@@ -724,8 +733,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           }
           res.status(200).json({ created: Math.floor(Date.now() / 1000), data: [{ b64_json: b64 }] });
         } catch (err) {
+          const timedOut = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
           res.status(502).json({
-            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+            error: {
+              message: timedOut
+                ? "nvidia genai did not respond within 90s — NVIDIA's free image queue is overloaded right now; try again later or pick another provider"
+                : err instanceof Error
+                  ? err.message
+                  : String(err),
+              type: "upstream_error",
+            },
           });
         }
         return;
