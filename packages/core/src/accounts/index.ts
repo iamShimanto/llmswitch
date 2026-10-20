@@ -9,6 +9,13 @@
  * A key that returns 401/403 (bad key) or 429 (rate limited) is cooled for
  * 60s; the pool round-robins over the remaining healthy keys.
  * Key VALUES are never exposed — status() only reports counts.
+ *
+ * COOLDOWN SCOPING (learned live): a 401/403 is often about the MODEL,
+ * not the key ("You need to sign in to use this model") — cooling the
+ * provider's only key provider-wide made every later model fail with
+ * "no healthy account keys" (one bad combo target poisoned the rest).
+ * Auth failures therefore cool the (key, model) pair only; a 429 is an
+ * account-level quota signal and still cools the whole key.
  */
 
 /** Collect all configured keys for one provider env key. */
@@ -41,7 +48,15 @@ export class AccountPool {
   private readonly keys: string[];
   private cursor = 0;
   private coolingUntil = new Map<string, number>();
+  /** Model-scoped auth cooldowns: `${key}\n${model}` → until timestamp. */
+  private modelCoolingUntil = new Map<string, number>();
   private usageCount = new Map<string, number>();
+
+  private isCooling(key: string, now: number, model?: string): boolean {
+    if ((this.coolingUntil.get(key) ?? 0) > now) return true;
+    if (model && (this.modelCoolingUntil.get(`${key}\n${model}`) ?? 0) > now) return true;
+    return false;
+  }
 
   constructor(keys: string[], private cooldownMs = 60_000) {
     this.keys = [...new Set(keys)];
@@ -51,9 +66,9 @@ export class AccountPool {
     return this.keys.length;
   }
 
-  /** Number of keys not currently cooling. */
-  healthy(now = Date.now()): number {
-    return this.keys.filter((k) => (this.coolingUntil.get(k) ?? 0) <= now).length;
+  /** Number of keys not currently cooling (for `model`, when given). */
+  healthy(now = Date.now(), model?: string): number {
+    return this.keys.filter((k) => !this.isCooling(k, now, model)).length;
   }
 
   /**
@@ -64,11 +79,10 @@ export class AccountPool {
     exclude: Set<string> = new Set(),
     now = Date.now(),
     strategy: AccountStrategy = "round-robin",
+    model?: string,
   ): string | null {
     if (this.keys.length === 0) return null;
-    const healthy = this.keys.filter(
-      (k) => !exclude.has(k) && (this.coolingUntil.get(k) ?? 0) <= now,
-    );
+    const healthy = this.keys.filter((k) => !exclude.has(k) && !this.isCooling(k, now, model));
     if (healthy.length === 0) return null;
     let ordered = healthy;
     if (strategy === "priority") {
@@ -94,14 +108,24 @@ export class AccountPool {
     return pick;
   }
 
-  /** Mark a key bad/rate-limited: cool it for `cooldownMs`. */
-  reportFailure(key: string, now = Date.now()): void {
-    if (this.keys.includes(key)) this.coolingUntil.set(key, now + this.cooldownMs);
+  /**
+   * Mark a failure. With `model`, the cooldown applies to that
+   * (key, model) pair ONLY (auth failures — the key may be perfectly
+   * healthy for other models). Without it, the whole key cools
+   * (rate-limit / quota failures).
+   */
+  reportFailure(key: string, now = Date.now(), model?: string): void {
+    if (!this.keys.includes(key)) return;
+    if (model) this.modelCoolingUntil.set(`${key}\n${model}`, now + this.cooldownMs);
+    else this.coolingUntil.set(key, now + this.cooldownMs);
   }
 
   /** A success clears any cooldown on the key. */
   reportSuccess(key: string): void {
     this.coolingUntil.delete(key);
+    for (const k of [...this.modelCoolingUntil.keys()]) {
+      if (k.startsWith(`${key}\n`)) this.modelCoolingUntil.delete(k);
+    }
     this.usageCount.set(key, (this.usageCount.get(key) ?? 0) + 1);
   }
 
