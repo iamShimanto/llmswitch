@@ -38,6 +38,7 @@ export function createServer(
 ): ServerContext {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
+  app.use(express.urlencoded({ extended: false, limit: "10mb" }));
   // trust proxy headers when behind docker/nginx
   app.set("trust proxy", 1);
   // baseline security headers
@@ -108,7 +109,7 @@ export function createServer(
     const fresh = registry.connected(env);
     providers.splice(0, providers.length, ...fresh);
   };
-  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry });
+  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry, dashboardSessions: sessions });
 
   if (hasDashboard) {
     app.use(express.static(dashboardDir));

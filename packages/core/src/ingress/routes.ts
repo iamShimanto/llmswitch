@@ -68,6 +68,8 @@ export interface RouteDeps {
   routingLog: RoutingEventLog;
   /** Outbound fetch (Google OAuth etc.). Defaults to global fetch; tests inject a mock. */
   fetchFn?: typeof fetch;
+  /** Dashboard login sessions — used to gate the /proxy login window. */
+  dashboardSessions?: { valid: (token: string | undefined | null) => boolean };
   /** Re-resolve connected providers after credential changes (OAuth connect, key add…). */
   refreshProviders?: () => void;
   /** Full provider registry (catalog pages). */
@@ -820,6 +822,163 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   app.get("/api/explain/routing", (_req: Request, res: Response) => {
     res.json(routingExplain());
   });
+
+  // ---- Login-window proxy (cookie providers) ----
+  // The dashboard opens /proxy/<id>/?s=<dashboard session|admin key>: the
+  // provider's own site loads THROUGH the gateway, so when the user logs in
+  // there, the site's responses pass through us and we capture the session
+  // cookies into the provider's session file — it connects automatically.
+  // Best effort: multi-domain auth hosts and anti-bot walls can still block
+  // some providers; the paste import below remains the fallback.
+  const proxyJars = new Map<string, Map<string, string>>();
+  const PROXY_COOKIE = "llmswitch_proxy";
+
+  function proxyGateToken(req: Request): string {
+    const fromQuery = typeof req.query.s === "string" ? req.query.s : "";
+    if (fromQuery) return fromQuery;
+    const cookieHeader = req.headers.cookie ?? "";
+    for (const part of cookieHeader.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq > 0 && part.slice(0, eq).trim() === PROXY_COOKIE) return part.slice(eq + 1).trim();
+    }
+    return "";
+  }
+
+  function proxyAuthed(req: Request): boolean {
+    const tok = proxyGateToken(req);
+    if (!tok) return false;
+    const admin = (process.env.ADMIN_KEY ?? "").trim();
+    if (admin && tok === admin) return true;
+    return deps.dashboardSessions?.valid(tok) ?? false;
+  }
+
+  function persistProxyJar(def: import("../providers/types.js").ProviderDef): void {
+    const jar = proxyJars.get(def.id);
+    if (!jar || jar.size === 0) return;
+    const dir = sessionsDir();
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${def.id}.json`);
+    const cookies = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    let domain = "";
+    try {
+      domain = def.baseUrl ? new URL(def.baseUrl).hostname : "";
+    } catch {
+      domain = "";
+    }
+    writeFileSync(
+      file,
+      JSON.stringify({ kind: "cookies", provider: def.id, cookies, cookieDomain: domain, savedAt: Date.now() }, null, 2),
+      { mode: 0o600 },
+    );
+    try {
+      chmodSync(file, 0o600);
+    } catch {
+      /* best effort */
+    }
+    deps.refreshProviders?.();
+  }
+
+  const proxyHandler = async (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def || (def.authType ?? "") !== "cookie" || !def.baseUrl) {
+      res.status(404).send("unknown cookie provider");
+      return;
+    }
+    if (!proxyAuthed(req)) {
+      res.status(401).send("Open this login window from the LLMSwitch dashboard: Providers → this provider → Open login window.");
+      return;
+    }
+    // Arriving with the gate token in the query: store it as a cookie scoped
+    // to /proxy (so page assets pass the gate) and continue at a clean URL.
+    if (typeof req.query.s === "string" && req.query.s) {
+      res.cookie(PROXY_COOKIE, req.query.s, { httpOnly: true, path: "/proxy", sameSite: "lax", maxAge: 3600_000 });
+      const clean = req.originalUrl.replace(/([?&])s=[^&]*&?/, "$1").replace(/[?&]$/, "");
+      res.redirect(302, clean || `/proxy/${def.id}/`);
+      return;
+    }
+    const fetchFn = deps.fetchFn ?? fetch;
+    const origin = new URL(def.baseUrl).origin;
+    const rest = req.params[0] ? `/${req.params[0]}` : "/";
+    const qIndex = req.originalUrl.indexOf("?");
+    const search = qIndex >= 0 ? req.originalUrl.slice(qIndex) : "";
+    const target = origin + rest + search;
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (typeof v !== "string") continue;
+      const lk = k.toLowerCase();
+      if (["host", "connection", "content-length", "cookie", "accept-encoding"].includes(lk)) continue;
+      headers[k] = v;
+    }
+    headers["accept-encoding"] = "identity";
+    const jar = proxyJars.get(def.id);
+    if (jar && jar.size > 0) {
+      headers.cookie = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    }
+    let body: string | undefined;
+    if (!["GET", "HEAD"].includes(req.method)) {
+      const ct = req.headers["content-type"] ?? "";
+      if (typeof req.body === "string") body = req.body;
+      else if (req.body && typeof req.body === "object") {
+        body = ct.includes("application/json")
+          ? JSON.stringify(req.body)
+          : new URLSearchParams(req.body as Record<string, string>).toString();
+      }
+    }
+    let up: Awaited<ReturnType<typeof fetch>>;
+    try {
+      up = await fetchFn(target, { method: req.method, headers, body, redirect: "manual" });
+    } catch (err) {
+      res.status(502).send(`proxy fetch failed: ${err instanceof Error ? err.message : "unknown"}`);
+      return;
+    }
+    // Capture session cookies
+    const getSetCookie = (up.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie;
+    const setCookies = typeof getSetCookie === "function" ? getSetCookie.call(up.headers) : [];
+    if (setCookies.length > 0) {
+      const j = proxyJars.get(def.id) ?? new Map<string, string>();
+      proxyJars.set(def.id, j);
+      let changed = false;
+      for (const sc of setCookies) {
+        const pair = sc.split(";")[0] ?? "";
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        const name = pair.slice(0, eq).trim();
+        const value = pair.slice(eq + 1).trim();
+        if (j.get(name) !== value) {
+          j.set(name, value);
+          changed = true;
+        }
+      }
+      if (changed) persistProxyJar(def);
+    }
+    // Forward response (minus framing/security headers that would break the window)
+    for (const [k, v] of up.headers) {
+      const lk = k.toLowerCase();
+      if (["content-security-policy", "x-frame-options", "set-cookie", "content-length", "transfer-encoding", "content-encoding"].includes(lk)) continue;
+      if (lk === "location") {
+        let loc = v;
+        if (loc.startsWith(origin)) loc = `/proxy/${def.id}` + loc.slice(origin.length);
+        else if (loc === "/") loc = `/proxy/${def.id}/`;
+        res.setHeader(k, loc);
+        continue;
+      }
+      res.setHeader(k, v);
+    }
+    res.status(up.status);
+    const buf = Buffer.from(await up.arrayBuffer());
+    const ct = up.headers.get("content-type") ?? "";
+    if (ct.includes("text/html")) {
+      let text = buf.toString("utf8");
+      text = text.split(origin).join(`/proxy/${def.id}`);
+      text = text.replace(/(href|src|action)="\//g, `$1="/proxy/${def.id}/`);
+      text = text.replace(/(href|src|action)='\//g, `$1='/proxy/${def.id}/`);
+      res.send(text);
+    } else {
+      res.send(buf);
+    }
+  };
+  app.all("/proxy/:id", proxyHandler);
+  app.all("/proxy/:id/*", proxyHandler);
 
   // ---- Web-session management (metadata only — secrets never leave the server) ----
   function sessionsDir(): string {
