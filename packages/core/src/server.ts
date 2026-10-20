@@ -189,6 +189,27 @@ export function createServer(
           /* stats must never break traffic */
         }
       },
+      capped: (() => {
+        // Memoized 15s: a usage_log SUM per request would be wasteful.
+        let memo = new Map<string, { at: number; ids: Set<string> }>();
+        return (providerId: string): Set<string> => {
+          const hit = memo.get(providerId);
+          if (hit && Date.now() - hit.at < 15_000) return hit.ids;
+          const ids = new Set<string>();
+          try {
+            const dayStart = new Date().setUTCHours(0, 0, 0, 0);
+            for (const a of store.listAccounts(providerId)) {
+              if (a.dailyCapUsd != null && store.accountDailySpend(a.id, dayStart) >= a.dailyCapUsd) {
+                ids.add(a.id);
+              }
+            }
+          } catch {
+            /* cap checks must never break traffic */
+          }
+          memo.set(providerId, { at: Date.now(), ids });
+          return ids;
+        };
+      })(),
     },
     routingRules: () => store.listRoutingRules(),
     combos: () =>

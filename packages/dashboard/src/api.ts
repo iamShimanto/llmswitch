@@ -333,7 +333,7 @@ export const api = {
     req<{ accounts: ProviderAccount[] }>(
       `/api/accounts${providerId ? `?provider=${encodeURIComponent(providerId)}` : ""}`,
     ),
-  updateAccount: (id: string, patch: { label?: string; enabled?: boolean }) =>
+  updateAccount: (id: string, patch: { label?: string; enabled?: boolean; dailyCapUsd?: number | null }) =>
     req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "POST", body: JSON.stringify(patch) }),
   deleteAccount: (id: string) => req<{ ok: boolean }>(`/api/accounts/${id}`, { method: "DELETE" }),
   combos: () => req<{ combos: ServerCombo[] }>("/api/combos"),
@@ -592,6 +592,8 @@ export interface ProviderAccount {
   calls: number;
   errors: number;
   lastError: string | null;
+  dailyCapUsd?: number | null;
+  spentTodayUsd?: number;
 }
 
 export interface ComboTarget {

@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS provider_accounts (
   last_used_at INTEGER,
   calls INTEGER NOT NULL DEFAULT 0,
   errors INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT
+  last_error TEXT,
+  daily_cap_usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_accounts_provider ON provider_accounts(provider_id);
 CREATE TABLE IF NOT EXISTS routing_rules (
@@ -172,6 +173,9 @@ export class Store {
     }
     if (!cols("request_logs").has("account_id")) {
       this.db.exec("ALTER TABLE request_logs ADD COLUMN account_id TEXT");
+    }
+    if (!cols("provider_accounts").has("daily_cap_usd")) {
+      this.db.exec("ALTER TABLE provider_accounts ADD COLUMN daily_cap_usd REAL");
     }
     if (!cols("api_keys").has("budget_usd")) {
       this.db.exec("ALTER TABLE api_keys ADD COLUMN budget_usd REAL");
@@ -529,7 +533,7 @@ export class Store {
     return rows.map(mapAccount);
   }
 
-  updateAccount(id: string, patch: { label?: string; enabled?: boolean }): boolean {
+  updateAccount(id: string, patch: { label?: string; enabled?: boolean; dailyCapUsd?: number | null }): boolean {
     const sets: string[] = [];
     const vals: unknown[] = [];
     if (patch.label !== undefined) {
@@ -539,6 +543,10 @@ export class Store {
     if (patch.enabled !== undefined) {
       sets.push("enabled = ?");
       vals.push(patch.enabled ? 1 : 0);
+    }
+    if (patch.dailyCapUsd !== undefined) {
+      sets.push("daily_cap_usd = ?");
+      vals.push(patch.dailyCapUsd);
     }
     if (sets.length === 0) return false;
     const res = this.db
@@ -550,6 +558,14 @@ export class Store {
   deleteAccount(id: string): boolean {
     const res = this.db.prepare(`DELETE FROM provider_accounts WHERE id = ?`).run(id);
     return res.changes > 0;
+  }
+
+  /** Spend (USD) booked to one account since `sinceMs` (usage_log). */
+  accountDailySpend(accountId: string, sinceMs: number): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM usage_log WHERE account_id = ? AND ts >= ?")
+      .get(accountId, sinceMs) as { total: number };
+    return row.total;
   }
 
   recordAccountUse(id: string, ok: boolean, error?: string): void {
@@ -1156,6 +1172,8 @@ export interface ProviderAccount {
   providerId: string;
   label: string;
   kind: "api_key" | "session";
+  /** Optional per-account daily spend cap (USD); null = uncapped. */
+  dailyCapUsd?: number | null;
   /** The API key value for kind=api_key (never exposed via the API layer). */
   secret: string | null;
   enabled: boolean;
@@ -1211,5 +1229,6 @@ function mapAccount(r: Record<string, unknown>): ProviderAccount {
     calls: Number(r.calls ?? 0),
     errors: Number(r.errors ?? 0),
     lastError: typeof r.last_error === "string" ? r.last_error : null,
+    dailyCapUsd: typeof r.daily_cap_usd === "number" ? r.daily_cap_usd : null,
   };
 }
