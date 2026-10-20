@@ -106,20 +106,29 @@ async function runTurn({ prompt, cookies, timeoutMs }) {
       timeout: 25_000,
     });
     if (!composer) throw new Error("composer not found on chatgpt.com");
+    await sleep(800); // let the SPA finish its initial navigation/settling
     await composer.click();
     await page.keyboard.type(prompt, { delay: 8 });
     await sleep(600);
-    const sent = await page.evaluate(() => {
-      const btn = document.querySelector(
-        'button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label*="Send"]',
-      );
-      if (btn && !btn.disabled) {
-        btn.click();
-        return true;
-      }
-      return false;
-    });
-    if (!sent) await page.keyboard.press("Enter");
+    // The send click races the SPA's navigation to /c/<id> — an evaluate
+    // destroyed by that navigation is fine (the click may still have
+    // landed); Enter is the fallback and the poll loop is the judge.
+    let sent = false;
+    try {
+      sent = await page.evaluate(() => {
+        const btn = document.querySelector(
+          'button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label*="Send"]',
+        );
+        if (btn && !btn.disabled) {
+          btn.click();
+          return true;
+        }
+        return false;
+      });
+    } catch {
+      sent = false;
+    }
+    if (!sent) await page.keyboard.press("Enter").catch(() => {});
 
     // Poll until the assistant text is non-empty and stable.
     const deadline = Date.now() + budget;
@@ -174,7 +183,16 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        const text = await enqueue(() => runTurn(body));
+        // One automatic retry with a fresh browser context: transient
+        // navigation races and page hiccups are common enough that a
+        // single retry turns most of them into successes.
+        const text = await enqueue(async () => {
+          try {
+            return await runTurn(body);
+          } catch {
+            return await runTurn(body);
+          }
+        });
         send(200, { ok: true, text });
       } catch (err) {
         send(200, { ok: false, error: err instanceof Error ? err.message : String(err) });
