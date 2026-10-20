@@ -69,7 +69,7 @@ describe("management API auth", () => {
     s = await boot();
     const r = await fetch(`http://127.0.0.1:${s.port}/healthz`);
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(r.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+    expect(r.headers.get("x-frame-options")).toBe("DENY");
   });
 
   it("/v1/* still needs gateway API key", async () => {
