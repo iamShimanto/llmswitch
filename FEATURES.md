@@ -394,3 +394,48 @@ model errors entirely.
   in ~10 min); calls 2–3 were stopped at the gate — the breaker still
   showed failures=1 afterwards, i.e. no further upstream calls happened.
   Breakers were reset and the throwaway key deleted after the test.
+
+## Hardening & completeness batch (2026-10-20, evening)
+Seven improvements shipped one by one, each tested and verified live:
+1. **Security**: login failure lockout (5 consecutive failures → 5 min
+   lock, doubling to 1 h, audited; the old 10/min throttle remains),
+   X-Frame-Options tightened SAMEORIGIN → DENY, minimum new-password
+   length 8, and a change-the-default-password prompt shown after login
+   while the default password is still in use.
+2. **Backups**: full SQLite snapshots (VACUUM INTO) with list /
+   download / delete / restore APIs; restore is validated and STAGED —
+   applied at the next process start with the previous DB kept as
+   .pre-restore-<ts>. Automatic daily backup keeps the newest 7
+   (BACKUP_AUTO=0 disables). Runtime page → Backups panel.
+3. **Per-account daily caps**: provider_accounts.daily_cap_usd; today's
+   spend comes from usage_log; the router excludes capped accounts from
+   key and session rotation (15 s memoized check; the provider's
+   default connection still serves; a pinned capped account fails with
+   a clear error). Provider page shows cap + spent-today + CAPPED badge.
+4. **Claude/Codex subscription quota**: /api/oauth/usage (Claude:
+   5-hour, 7-day, Opus, Sonnet windows) and wham/usage (Codex: primary
+   + weekly windows) fetched per account with a 60 s cache, rendered
+   through the same accountQuotas buckets as Antigravity. Parsers
+   unit-tested; live data appears once those providers are connected.
+5. **ChatGPT Sentinel PoW**: the chat-requirements flow + SHA3-512
+   proof-of-work solver (gAAAAAC/gAAAAAB tokens) now runs headlessly
+   in the shared ChatGPT driver. LIVE RESULT: the flow reaches the
+   requirements stage, and ChatGPT then demands a Turnstile token for
+   this session/IP — that token can only be minted by a real browser
+   (why OmniRoute drives one), so chat remains blocked there; the
+   failure now says exactly that instead of an opaque HTTP 403, and
+   the circuit breaker keeps repeat attempts free. Closing this fully
+   needs a browser-bridge service (separate build).
+6. **Retention + mobile**: usage_log retention (default 180 days,
+   0 = forever; Settings → Security → Data retention; pruned at boot
+   and daily). Logs/Analytics/Costs tables scroll horizontally on
+   mobile with a minimum column width instead of crushing.
+7. **Smoke E2E**: tests/smoke.e2e.test.ts boots the real gateway
+   against a stub upstream and walks login → key → models → chat →
+   cache hit → breaker fail-fast → backups → quotas over HTTP.
+Core suite: 481/481 (64 files); web-session pack: 228/228.
+Known small issue spotted during verification: the Antigravity
+DEFAULT account's quota group intermittently disappears from
+/api/quotas (its chat path is healthy; the DB account's 22 buckets
+load fine) — the quota fetcher skips accounts whose retrieveUserQuota
+call fails; to be diagnosed separately.
