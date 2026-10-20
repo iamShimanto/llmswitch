@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (default). The <html> element carries .dark unless
+   the user picks light in Settings → Appearance. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
+
+/* Light theme: remap the zinc surfaces the dashboard is built on.
+   Scoped to html:not(.dark) so the dark default is untouched. */
+html:not(.dark) body {
+  background-color: #f4f4f5;
+  color: #18181b;
+}
+html:not(.dark) .bg-zinc-950 { background-color: #fafafa; }
+html:not(.dark) .bg-zinc-900 { background-color: #ffffff; }
+html:not(.dark) .bg-zinc-800 { background-color: #e4e4e7; }
+html:not(.dark) .border-zinc-800 { border-color: #e4e4e7; }
+html:not(.dark) .border-zinc-700 { border-color: #d4d4d8; }
+html:not(.dark) .text-zinc-100 { color: #18181b; }
+html:not(.dark) .text-zinc-200 { color: #27272a; }
+html:not(.dark) .text-zinc-300 { color: #3f3f46; }
+html:not(.dark) .text-zinc-400 { color: #52525b; }
+html:not(.dark) .text-zinc-500 { color: #71717a; }
+html:not(.dark) .text-zinc-600 { color: #52525b; }
+/* Light mode: the active nav item uses bg-zinc-800 + text-white, which washes
+   out on light surfaces — force readable text inside the nav. */
+html:not(.dark) nav .bg-zinc-800 { color: #18181b; }
+html:not(.dark) nav .hover\:text-white:hover { color: #18181b; }
+
+/* Bronze palette (user-picked): warm ivory light + espresso dark, bronze/gold accent.
+   Activated by the .pal-bronze class on <html> (see src/theme.ts). */
+/* --- Dark bronze --- */
+html.dark.pal-bronze body { background-color: #171412; color: #f5efe6; }
+html.dark.pal-bronze .bg-zinc-950 { background-color: #171412; }
+html.dark.pal-bronze .bg-zinc-900 { background-color: #26211c; }
+html.dark.pal-bronze .bg-zinc-800 { background-color: #3a332b; }
+html.dark.pal-bronze .border-zinc-800 { border-color: #3a332b; }
+html.dark.pal-bronze .border-zinc-700 { border-color: #4a4238; }
+html.dark.pal-bronze .hover\:border-zinc-600:hover { border-color: #d6ad68; }
+html.dark.pal-bronze .bg-sky-600, html.dark.pal-bronze .bg-sky-500,
+html.dark.pal-bronze .bg-emerald-600, html.dark.pal-bronze .bg-emerald-500 {
+  background-color: #d6ad68; color: #20180a;
+}
+html.dark.pal-bronze .bg-sky-900 { background-color: #3a2c17; }
+html.dark.pal-bronze .text-sky-300, html.dark.pal-bronze .text-sky-400 { color: #d6ad68; }
+html.dark.pal-bronze .bg-emerald-900 { background-color: #2e2415; }
+html.dark.pal-bronze .text-emerald-300, html.dark.pal-bronze .text-emerald-400 { color: #d6ad68; }
+html.dark.pal-bronze .text-amber-300, html.dark.pal-bronze .text-amber-400 { color: #e8c87a; }
+/* --- Light bronze --- */
+html:not(.dark).pal-bronze body { background-color: #faf7f2; color: #221c15; }
+html:not(.dark).pal-bronze .bg-zinc-950 { background-color: #faf7f2; }
+html:not(.dark).pal-bronze .bg-zinc-900 { background-color: #ffffff; }
+html:not(.dark).pal-bronze .bg-zinc-800 { background-color: #ece5d8; }
+html:not(.dark).pal-bronze .border-zinc-800 { border-color: #e3dac9; }
+html:not(.dark).pal-bronze .border-zinc-700 { border-color: #d6cbb6; }
+html:not(.dark).pal-bronze .hover\:border-zinc-600:hover { border-color: #b88a44; }
+html:not(.dark).pal-bronze .bg-sky-600, html:not(.dark).pal-bronze .bg-sky-500,
+html:not(.dark).pal-bronze .bg-emerald-600, html:not(.dark).pal-bronze .bg-emerald-500 {
+  background-color: #b88a44; color: #ffffff;
+}
+html:not(.dark).pal-bronze .bg-sky-900 { background-color: #f0e4cd; }
+html:not(.dark).pal-bronze .text-sky-300, html:not(.dark).pal-bronze .text-sky-400 { color: #b88a44; }
+html:not(.dark).pal-bronze .bg-emerald-900 { background-color: #f0e4cd; }
+html:not(.dark).pal-bronze .text-emerald-300, html:not(.dark).pal-bronze .text-emerald-400 { color: #96690f; }
+

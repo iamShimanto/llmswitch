@@ -1,0 +1,17 @@
+{
+  "description": "Opt-in web-session provider packs for LLMSwitch (experimental)",
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "main": "./dist/src/index.js",
+  "name": "@llmswitch/web-session",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "type": "module",
+  "types": "./dist/src/index.d.ts",
+  "version": "0.1.0"
+}

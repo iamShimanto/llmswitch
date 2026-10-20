@@ -1,0 +1,1 @@
+{"bin":{"llmswitch":"./bin/llmswitch.js"},"dependencies":{"@llmswitch/core":"0.1.0"},"description":"LLMSwitch CLI — run your own AI gateway.","engines":{"node":">=22"},"license":"MIT","name":"llmswitch","type":"module","version":"0.1.0"}

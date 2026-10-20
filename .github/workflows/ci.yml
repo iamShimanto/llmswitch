@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -p packages/core/tsconfig.json --noEmit
+      - run: npx vitest run --project core 2>/dev/null || npx vitest run
+        working-directory: packages/core
+      - run: npx tsc --noEmit
+        working-directory: packages/dashboard
+      - run: npm run build
+        working-directory: packages/dashboard
+      - run: node scripts/smoke.mjs
+      - run: node scripts/smoke-p1.mjs

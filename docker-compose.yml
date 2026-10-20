@@ -1,0 +1,18 @@
+services:
+  llmswitch:
+    build: .
+    image: llmswitch/llmswitch:latest
+    container_name: llmswitch
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6000:6000"
+    volumes:
+      - llmswitch-data:/app/data
+    env_file:
+      - .env
+    environment:
+      PORT: 6000
+      DATA_DIR: /app/data
+
+volumes:
+  llmswitch-data:

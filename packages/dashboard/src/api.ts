@@ -1,0 +1,207 @@
+/** Typed client for the gateway's dashboard API. */
+
+export interface ProviderInfo {
+  id: string;
+  name: string;
+  wireFormat: string;
+  /** "api-key" | "oauth" | "token-import" | "none" — "none" = keyless */
+  authType?: string;
+  models: string[];
+  defaultModel: string;
+  stats: { calls: number; errors: number; totalLatencyMs: number };
+}
+
+export interface UsageRow {
+  provider: string;
+  model: string;
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  errors: number;
+}
+
+export interface KeyRecord {
+  id: string;
+  name: string;
+  rpmLimit: number;
+  budgetUsd: number | null;
+  workspaceId: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+}
+
+export interface OAuthStatus {
+  connected: boolean;
+  email?: string;
+  projectId?: string;
+  accountId?: string;
+  expiresAt?: number;
+}
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const adminKey = localStorage.getItem("llmswitch_admin_key");
+  const { headers: initHeaders, ...rest } = init ?? {};
+  const res = await fetch(path, {
+    ...rest,
+    headers: {
+      "content-type": "application/json",
+      ...(adminKey ? { "x-admin-key": adminKey } : {}),
+      ...(initHeaders ?? {}),
+    },
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  return res.json() as Promise<T>;
+}
+
+export function getAdminKey(): string {
+  return localStorage.getItem("llmswitch_admin_key") ?? "";
+}
+
+export function setAdminKey(k: string): void {
+  if (k) localStorage.setItem("llmswitch_admin_key", k);
+  else localStorage.removeItem("llmswitch_admin_key");
+}
+
+export const api = {
+  health: () => req<{ status: string; version: string; providers: string[] }>("/healthz"),
+  providers: () => req<ProviderInfo[]>("/api/providers"),
+  usage: () => req<UsageRow[]>("/api/usage"),
+  keys: () => req<KeyRecord[]>("/api/keys"),
+  createKey: (name: string, budgetUsd?: number | null) =>
+    req<KeyRecord & { key: string }>("/api/keys", {
+      method: "POST",
+      body: JSON.stringify({ name, budgetUsd: budgetUsd ?? null }),
+    }),
+  revokeKey: (id: string) => req<{ revoked: boolean }>(`/api/keys/${id}`, { method: "DELETE" }),
+  setBudget: (id: string, budgetUsd: number | null) =>
+    req(`/api/keys/${id}/budget`, { method: "PUT", body: JSON.stringify({ budgetUsd }) }),
+  cacheStats: () => req<{ entries: number; hits: number; misses: number; hitRate: number }>("/api/cache/stats"),
+  clearCache: () => req<{ cleared: boolean }>("/api/cache", { method: "DELETE" }),
+  compressionPreview: (text: string, mode = "stacked") =>
+    req<{ text: string; stats: { savedPct: number; estTokensBefore: number; estTokensAfter: number } }>(
+      "/api/compression/preview",
+      { method: "POST", body: JSON.stringify({ text, mode }) },
+    ),
+  inspector: () => req<InspectEntry[]>("/api/inspector"),
+  inspectorGet: (id: string) => req<InspectEntry>(`/api/inspector/${id}`),
+  playground: (messages: Array<{ role: string; content: string }>, providers: string[]) =>
+    req<{ results: FanoutResult[] }>("/api/playground", {
+      method: "POST",
+      body: JSON.stringify({ messages, providers }),
+    }),
+  discover: (id: string) => req<{ provider: string; models: string[] }>(`/api/providers/${id}/discover`),
+  workspaces: () => req<Workspace[]>("/api/workspaces"),
+  createWorkspace: (name: string) =>
+    req<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify({ name }) }),
+  setKeyWorkspace: (id: string, workspaceId: string) =>
+    req(`/api/keys/${id}/workspace`, { method: "PUT", body: JSON.stringify({ workspaceId }) }),
+  audit: () => req<Array<{ id: number; ts: number; action: string; detail: string }>>("/api/audit"),
+  costsSummary: () =>
+    req<{ monthToDateUsd: number; forecast: { projectedMonthly: number } }>("/api/costs/summary"),
+  costsForecast: () =>
+    req<{ daily: Array<{ day: string; total: number }>; projectedMonthly: number }>("/api/costs/forecast"),
+  quotas: () => req<{ providers: QuotaProvider[] }>("/api/quotas"),
+  usageDaily: (days = 30) => req<{ days: DailyUsageRow[] }>(`/api/usage/daily?days=${days}`),
+  sessions: () => req<{ sessions: SessionMeta[] }>("/api/sessions"),
+  deleteSession: (name: string) =>
+    req<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  batches: () => req<{ object: string; data: BatchJob[] }>("/api/batches"),
+  cancelBatch: (id: string) =>
+    req<unknown>(`/api/batches/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  oauthAntigravityStart: () => req<{ url: string }>("/api/oauth/antigravity/start"),
+  oauthAntigravityStatus: () => req<OAuthStatus>("/api/oauth/antigravity/status"),
+  oauthAntigravityDisconnect: () =>
+    req<{ connected: boolean }>("/api/oauth/antigravity/disconnect", { method: "POST" }),
+  oauthStart: (id: string) => req<{ url: string }>(`/api/oauth/${id}/start`),
+  oauthStatus: (id: string) => req<OAuthStatus>(`/api/oauth/${id}/status`),
+  oauthDisconnect: (id: string) =>
+    req<{ connected: boolean }>(`/api/oauth/${id}/disconnect`, { method: "POST" }),
+  getConfig: () => req<GatewayConfig>("/api/config"),
+  putConfig: (patch: Partial<ConfigPatch>) =>
+    req<GatewayConfig>("/api/config", { method: "PUT", body: JSON.stringify(patch) }),
+};
+
+export interface QuotaProvider {
+  id: string;
+  connected: boolean;
+  calls: number;
+  errors: number;
+  telemetry: { remaining: number | null; limit: number | null; resetAt: number | null } | null;
+}
+
+export interface DailyUsageRow {
+  day: string;
+  requests: number;
+  errors: number;
+  costUsd: number;
+}
+
+export interface SessionMeta {
+  name: string;
+  kind: string;
+  provider: string | null;
+  cookieDomain: string | null;
+  expiresAt: number | null;
+  savedAt: number | null;
+}
+
+export interface BatchJob {
+  id: string;
+  status?: string;
+  endpoint?: string;
+  created_at?: number;
+  completed_at?: number | null;
+  [k: string]: unknown;
+}
+
+export interface ConfigValue<T> {
+  value: T;
+  source: "db" | "env";
+}
+
+export interface GatewayConfig {
+  strategy: ConfigValue<string>;
+  pii_redact: ConfigValue<boolean>;
+  compression_default: ConfigValue<string | null>;
+  alert_webhook_url: ConfigValue<string | null> & { enabled: boolean };
+  budget_action: ConfigValue<string>;
+  global_budget_usd: ConfigValue<number | null> & { spentMonthToDate: number };
+}
+
+export interface ConfigPatch {
+  strategy?: string;
+  pii_redact?: boolean;
+  compression_default?: string | null;
+  alert_webhook_url?: string | null;
+  budget_action?: "warn" | "block";
+  global_budget_usd?: number | null;
+}
+
+export interface FanoutResult {
+  providerId: string;
+  model: string;
+  ok: boolean;
+  text?: string;
+  error?: string;
+  latencyMs: number;
+}
+
+export interface InspectEntry {
+  id: string;
+  ts: number;
+  keyId: string | null;
+  provider: string;
+  model: string;
+  strategy: string;
+  status: "ok" | "error";
+  latencyMs: number;
+  cached: boolean;
+  promptTokens: number;
+  completionTokens: number;
+  costUsd: number;
+  request: Array<{ role: string; content: string }>;
+  responsePreview: string;
+}

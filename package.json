@@ -1,0 +1,21 @@
+{
+  "description": "Open-source AI gateway \u2014 one endpoint, every AI.",
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "name": "llmswitch",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "dev": "npm --workspace @llmswitch/core run dev",
+    "test": "npm --workspace @llmswitch/core run test",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "type": "module",
+  "version": "0.1.0",
+  "workspaces": [
+    "packages/*",
+    "packs/*"
+  ]
+}
