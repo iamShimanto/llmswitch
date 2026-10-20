@@ -1,5 +1,27 @@
 # LLMSwitch — Full Feature List (v2 — complete)
 
+> UPDATE 2026-10-20 (night): **OmniRoute-style router combos shipped.**
+> A combo is now a named virtual model (dashboard → Combos): an ordered
+> target list (provider:model refs, bare models, "auto", or other
+> combos) with a strategy — priority, weighted, round-robin, random,
+> least-used, cost-optimized, fill-first. Requests addressed to the
+> combo name fall through targets on ANY failure until one answers;
+> combos appear in /v1/models and work anywhere a model name goes.
+> The old sequential pipeline combos remain (kind "pipeline"). The
+> dashboard Combos page was rebuilt server-backed (it previously kept
+> combos only in browser localStorage). A "free-pool" combo ships
+> pre-made on the reference deployment.
+
+> UPDATE 2026-10-20 (late evening): **OmniRoute-style Quotas page +
+> per-provider default model.** The Quotas page now shows live remaining
+> quota: rate-limit header telemetry for providers that advertise it
+> (a wiring bug that kept it permanently empty is fixed), and for
+> Antigravity a real per-account, per-model quota via Google Cloud
+> Code's `retrieveUserQuota` (remaining % bar + reset time per bucket,
+> 60s cached). Providers can also have their default model changed
+> from the dashboard (provider page → model row → "Set default"),
+> persisted across restarts.
+
 > Open-source AI gateway (MIT). OmniRoute parity + new differentiators.
 > Audit source: OmniRoute v3.8.53 tree — dashboard (~60 pages), `open-sse/services` (~300 modules),
 > 272 provider families / 375 entries, ~296 executors, ~8k test files.
@@ -212,3 +234,132 @@
 - **P0 MVP (~2–3 wks):** 1.1, 1.6, 1.10, 2.1 (15–20), 2.2–2.5, 3.1 (6 core), 4.1 (6 core), 5.1, 5.2, 5.4, 5.5, 8.1, 8.2, 8.8, 8.12, 12.1, 13.2, 15.1, 15.2, 16.1, 16.2, 17.1
 - **P1 (~1–2 mo):** dashboard depth, translation, compression, caching, cost mgmt, playground, inspector, webhooks, CLI, combos, quota telemetry
 - **P2 (later):** agents/MCP, fan-out, semantic cache, media, batch API, desktop/PWA, chaos, web-session providers
+
+---
+
+## Update 2026-10-20 (evening) — Combos v2: OmniRoute depth
+
+Verified against the user's own OmniRoute screenshots. Router combos now
+match OmniRoute's combo system:
+
+- **Per-target account pinning** — each target can pin a specific account
+  (key or session) or stay dynamic; PROVIDERS show their account counts
+  in the builder.
+- **Target syntax** — OmniRoute-style `provider/model` refs alongside
+  `provider:model`; combo names may carry a namespace slash
+  (`team/main`); `auto/` is reserved.
+- **Combo config** — system-prompt override; response validation
+  (forbidden/required substrings, min length) that fails over to the next
+  target on a bad 200; advertised context length in `/v1/models`;
+  enable/disable toggle.
+- **Strategies 7 → 11** — added p2c, headroom (quota-aware), context-relay
+  (sticky last winner), strict-random.
+- **Built-in auto/* catalog** — the 17 advertised templates
+  (`auto/best-coding`, `best-reasoning`, `best-fast`, `best-vision`,
+  `best-chat`, `best-free`, pro-*, coding/fast/chat/cheap/smart/
+  subscription) resolve live from connected providers with weighted
+  scoring + template system prompts; listed in `/v1/models` and the
+  dashboard catalog section with live candidate counts.
+- **Test-all endpoint** — POST /api/combos/test probes every target and
+  returns per-target results + `resolvedBy` (OmniRoute's test modal).
+- **Dashboard** — 4-stage wizard builder (Basics → Steps → Strategy →
+  Review with checklist + summary grid), steps with provider → model →
+  account pickers and combo refs, strategy tiles + advanced settings,
+  rich combo cards (copy id, strategy badge, target chips with account
+  labels, Active toggle, per-target test results, Edit/Delete).
+
+Verified: core 435/435; local E2E (slash combo + config round-trip,
+test-all fall-through, 17 templates, auto/best-chat live answer,
+query-delete); domain live: auto-catalog serving, free-pool test-all
+4/4 with resolvedBy, `auto/best-fast` answered "V2-OK" via kilo.
+
+---
+
+## Update 2026-10-20 (night) — Provider pages v2 (OmniRoute parity)
+
+Verified against the user's OmniRoute provider screenshots:
+
+- **Directory** — providers grouped into category sections (API Key /
+  OAuth / Web Cookie / Free-Keyless) with connected/total counts and a
+  per-section **Test All**; stat chips (Total + per-category, click to
+  filter); **two searches** (providers, and search-by-model with a 🎯
+  match hint on cards); **Configured-only** and **Compact** toggles;
+  media kind chips (Image/Video/Music/TTS/STT/Embedding, derived from
+  model ids); cards show **"● N Connected"** (default + accounts) or
+  "No connections", plus an **enable/disable switch** (off providers
+  leave rotation but stay connected).
+- **Detail** — header shows the live connection count; **per-provider
+  account-strategy override** card; Accounts get search + All/Active/
+  Error filters.
+- **Models** — filter search, Visible/Hidden filters, **eye toggles**
+  (hidden models leave routing but stay listed), Show/Hide all,
+  "N/M active" count, humanized display names, BUILT-IN/CUSTOM badges,
+  copy-id buttons; Test-all skips hidden models.
+- **Custom Models** — add model ids with optional display names; they
+  union into routing like discovered models and persist in the store.
+- **Param Filters** — per-provider blocked-parameter list; the generic
+  executor strips those keys from outgoing payloads (e.g. NVIDIA NIM
+  rejecting `thinking`).
+- **Cookie guide** — OmniRoute-style "How to get the session credential"
+  card (fast Cookie-Editor path + manual DevTools path + password
+  warning) on cookie provider connect forms.
+
+Verified: core 437/437 + pack 222/222; local E2E (custom model round
+trip, hide → excluded from /v1/models but listed in catalog, param
+block + strategy persistence, disable → provider leaves /v1/models,
+re-enable restores); domain catalog serves the new fields.
+
+---
+
+## Update 2026-10-20 (night) — Costs v2 + persistent provider stats
+
+- **Pricing engine v2**: model-name pattern pricing (45+ families) so
+  subscription/aggregator-routed models (Antigravity Claude/Gemini,
+  NVIDIA-hosted open models, Muse Spark) get list-price estimates;
+  free routes (keyless providers, *:free models) resolve as priced-/bin/bash;
+  user price overrides from the dashboard Pricing tab beat everything.
+- **History backfill**: zero-cost usage rows logged before a price
+  existed are repriced once at boot.
+- **Persistent stats**: provider Calls/Errors/Latency now aggregate the
+  usage database — deploys and restarts no longer reset them.
+- **Costs page**: priced-coverage indicator, spend-by-provider table,
+  editable budgets (global cap + warn/block, per-key budgets with
+  month-to-date spend), live pricing table with override management,
+  database-backed Quota Share.
+- Providers directory no longer shows the OAuth connect panel at the
+  top (the cards live on each provider's detail page).
+
+## Cache v2 (2026-10-20)
+The v1 prompt cache was audited and rebuilt. Weaknesses found: in-memory
+only (every deploy wiped it AND its stats); the key missed top_p, stop,
+seed, penalties, response_format and user (a request could be served a
+response generated with different parameters); one shared namespace for
+all gateway keys; FIFO instead of LRU eviction; responses stored by
+reference (caller mutation could corrupt them); streaming requests never
+cached; the semantic cache matched across ANY provider/model/system
+prompt/caller with no expiry; the dashboard hit-rate display multiplied
+by 100 twice.
+- Exact cache v2 (`cache/index.ts`): full-parameter keys via sorted
+  stable stringify; per-API-key namespace (`RouteOptions.cacheNamespace`,
+  wired at the chat/responses/messages handlers); true LRU; values
+  cloned in and out; optional write-through SQLite persister
+  (`prompt_cache` table in store/db.ts) — entries survive restarts and
+  deploys; TTL/max configurable via CACHE_TTL_MS / CACHE_MAX_ENTRIES
+  (default 1h / 2000).
+- Streaming (`cache/stream.ts`): completed streams are tapped, assembled
+  (content + tool calls + usage) and stored; a later streaming hit
+  replays the stored response as protocol-valid chunks. Broken streams
+  store nothing.
+- Semantic cache v2: entries scoped to namespace + provider + model +
+  system-prompt hash, TTL-bound, cloned, with hit/miss stats.
+- `GET /api/cache/stats` → `{ exact, semantic }`; DELETE clears both.
+  Dashboard Cache page shows persistence state, TTL/max and semantic
+  stats; the hit-rate bug is fixed.
+- Tests: cache-v2.test.ts ×14 (key sensitivity, namespace isolation,
+  LRU, cloning, persister round-trip + expiry, semantic scoping + TTL,
+  stream assembly/broken-stream/replay); the old "streaming is never
+  cached" test now asserts the v2 behaviour. Core 459/459.
+- Domain proof: identical non-stream call #2 returned `cached: true`;
+  streaming call #2 logged cached=true at 0 ms; after
+  `docker compose restart` the stats still showed entries=2 (hydrated
+  from SQLite) with persistent: true.
