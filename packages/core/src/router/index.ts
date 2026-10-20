@@ -317,7 +317,7 @@ async function executeWithRotation(
   let lastErr: unknown = null;
   let keyModelErrTries = 0;
   for (;;) {
-    const key = pool.next(tried, Date.now(), accountStrategy);
+    const key = pool.next(tried, Date.now(), accountStrategy, model);
     // NB: null-check, not falsiness — keyless/noAuth providers legitimately
     // carry the empty-string key ("") as their single pool slot.
     if (key === null) break;
@@ -334,7 +334,12 @@ async function executeWithRotation(
       const kind = classifyError(err);
       if (kind === "auth_error" || kind === "rate_limited") {
         if (acctId) hooks?.record(acctId, false, err instanceof Error ? err.message : String(err));
-        pool.reportFailure(key);
+        // Auth failures cool only this (key, model) pair — a 401 is often
+        // "this model needs sign-in", not a dead key; cooling the whole
+        // key made every other model fail with "no healthy account keys".
+        // Rate limits are account-level: the whole key cools.
+        if (kind === "auth_error") pool.reportFailure(key, Date.now(), model);
+        else pool.reportFailure(key);
         continue; // try the next key
       }
       if (kind === "model_error" && ++keyModelErrTries <= 1) {
@@ -344,7 +349,7 @@ async function executeWithRotation(
       throw err;
     }
   }
-  throw lastErr ?? new Error("no healthy account keys");
+  throw lastErr ?? new Error(`no healthy account keys for ${provider.id} (all keys are cooling down)`);
 }
 
 /** Create a stateful router over a fixed provider list. */

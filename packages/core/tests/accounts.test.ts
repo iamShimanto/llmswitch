@@ -106,8 +106,10 @@ describe("router key rotation", () => {
     const result = await router.route(body, { fetchFn });
     expect(result.response?.choices[0]?.message.content).toBe("ok");
     expect(seen).toEqual(["Bearer bad-key", "Bearer good-key"]);
-    // bad key is cooling now
-    expect(router.pools.get("a")!.healthy()).toBe(1);
+    // bad key is cooling FOR THIS MODEL (auth cooldowns are model-scoped);
+    // model-agnostic health still counts it, other models can use it.
+    expect(router.pools.get("a")!.healthy(Date.now(), body.model)).toBe(1);
+    expect(router.pools.get("a")!.healthy()).toBe(2);
   });
 
   it("falls from a 429 key to the next key", async () => {
@@ -126,7 +128,10 @@ describe("router key rotation", () => {
     const fetchFn = (async () => new Response("nope", { status: 401 })) as typeof fetch;
     const router = createRouter([prov("a", ["k1", "k2"])]);
     await expect(router.route(body, { fetchFn })).rejects.toThrow(/all providers failed/);
-    expect(router.pools.get("a")!.healthy()).toBe(0);
+    // both keys are cooled for the requested model…
+    expect(router.pools.get("a")!.healthy(Date.now(), body.model)).toBe(0);
+    // …but not provider-wide (a 401 can be model entitlement, not a dead key)
+    expect(router.pools.get("a")!.healthy()).toBe(2);
   });
 
   it("single-key providers behave as before", async () => {
@@ -135,5 +140,38 @@ describe("router key rotation", () => {
     const result = await router.route(body, { fetchFn });
     expect(result.response?.choices[0]?.message.content).toBe("solo");
     expect(router.pools.get("a")!.status()).toEqual({ total: 1, healthy: 1 });
+  });
+});
+
+describe("AccountPool model-scoped auth cooldowns", () => {
+  it("an auth failure on one model does not block the key for other models", () => {
+    const p = new AccountPool(["k1"], 60_000);
+    const t0 = 1_000_000;
+    p.reportFailure("k1", t0, "model-a");
+    // same model: blocked
+    expect(p.next(new Set(), t0 + 1, "round-robin", "model-a")).toBeNull();
+    // different model: the key is served
+    expect(p.next(new Set(), t0 + 1, "round-robin", "model-b")).toBe("k1");
+    // healthy() is model-aware
+    expect(p.healthy(t0 + 1, "model-a")).toBe(0);
+    expect(p.healthy(t0 + 1, "model-b")).toBe(1);
+    // after the cooldown the pair recovers
+    expect(p.next(new Set(), t0 + 61_000, "round-robin", "model-a")).toBe("k1");
+  });
+
+  it("a key-wide failure (rate limit) still blocks every model", () => {
+    const p = new AccountPool(["k1"], 60_000);
+    const t0 = 2_000_000;
+    p.reportFailure("k1", t0);
+    expect(p.next(new Set(), t0 + 1, "round-robin", "model-a")).toBeNull();
+    expect(p.next(new Set(), t0 + 1, "round-robin", "model-b")).toBeNull();
+  });
+
+  it("a success clears model-scoped cooldowns for that key", () => {
+    const p = new AccountPool(["k1"], 60_000);
+    const t0 = 3_000_000;
+    p.reportFailure("k1", t0, "model-a");
+    p.reportSuccess("k1");
+    expect(p.next(new Set(), t0 + 1, "round-robin", "model-a")).toBe("k1");
   });
 });
