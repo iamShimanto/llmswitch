@@ -523,3 +523,39 @@ describe("auto catalog provider diversity", () => {
     expect(targets.every((t) => t.model.startsWith("big:"))).toBe(true);
   });
 });
+
+describe("auto catalog category backfill", () => {
+  const mk = (id: string, models: string[], costTier: number, authType?: string): ResolvedProvider =>
+    ({
+      id,
+      name: id,
+      baseUrl: `https://${id}.example/v1`,
+      wireFormat: "openai",
+      models,
+      defaultModel: models[0],
+      costTier,
+      authType,
+      apiKey: "k",
+      allKeys: ["k"],
+    }) as ResolvedProvider;
+
+  it("best-coding backfills with strong general models when specialists are scarce", () => {
+    const providers = [
+      mk("wall", ["gpt-5.3-codex"], 4),
+      mk("agy", ["claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3.8-flash-high"], 4, "oauth"),
+    ];
+    const targets = buildAutoTargets(autoTemplate("auto/best-coding")!, providers);
+    expect(targets.length).toBe(4);
+    // the one true specialist stays first
+    expect(targets[0]!.model).toBe("wall:gpt-5.3-codex");
+    // general frontier models fill the remaining slots
+    expect(targets.map((t) => t.model)).toContain("agy:claude-sonnet-4-6");
+    expect(targets.map((t) => t.model)).toContain("agy:gemini-3.8-flash-high");
+  });
+
+  it("best-vision does NOT backfill with non-vision models", () => {
+    const providers = [mk("txt", ["llama-3.3-70b", "deepseek-chat"], 3)];
+    const targets = buildAutoTargets(autoTemplate("auto/best-vision")!, providers);
+    expect(targets).toHaveLength(0);
+  });
+});
