@@ -1,6 +1,6 @@
 // English strings — source of truth for dashboard i18n.
 export const en: Record<string, string> = {
-  "batches.lists_batches_via_the_first_connected_op": "Lists batches via the first connected OpenAI-wire provider. Create batches with POST /v1/batches.",
+  "batches.lists_batches_via_the_first_connected_op": "Lists batches via a connected provider that supports the Batches API. Create batches with POST /v1/batches.",
   "cache.semantic_cache": "Semantic cache",
   "changelog.express_gateway_on_6000_openai_compatibl": "Express gateway on :6000 — OpenAI-compatible chat, completions, responses, media APIs",
   "chaos.endpoint_in_the_gateway_failure_latency": "endpoint in the gateway — failure/latency injection for providers hasn't been built yet. All controls on this page are intentionally disabled rather than faked.",
