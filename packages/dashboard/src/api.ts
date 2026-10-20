@@ -337,6 +337,7 @@ export const api = {
     req<{ ok: boolean }>(`/api/routing-rules/${id}`, { method: "POST", body: JSON.stringify(patch) }),
   deleteRoutingRule: (id: string) =>
     req<{ ok: boolean }>(`/api/routing-rules/${id}`, { method: "DELETE" }),
+  endpointInfo: () => req<EndpointInfo>("/api/endpoint-info"),
   getConfig: () => req<GatewayConfig>("/api/config"),
   putConfig: (patch: Partial<ConfigPatch>) =>
     req<GatewayConfig>("/api/config", { method: "PUT", body: JSON.stringify(patch) }),
@@ -596,6 +597,26 @@ export interface GatewayConfig {
   alert_webhook_url: ConfigValue<string | null> & { enabled: boolean };
   budget_action: ConfigValue<string>;
   global_budget_usd: ConfigValue<number | null> & { spentMonthToDate: number };
+  global_system_prompt: ConfigValue<string>;
+  global_system_prompt_enabled: ConfigValue<boolean>;
+}
+
+export interface EndpointEntry {
+  group: string;
+  name: string;
+  path: string;
+  models: number | null;
+  tag?: string;
+  note?: string;
+}
+
+export interface EndpointInfo {
+  version: string;
+  port: number;
+  totalModels: number;
+  endpointCount: number;
+  connectedProviders: number;
+  endpoints: EndpointEntry[];
 }
 
 export interface ConfigPatch {
@@ -606,6 +627,8 @@ export interface ConfigPatch {
   alert_webhook_url?: string | null;
   budget_action?: "warn" | "block";
   global_budget_usd?: number | null;
+  global_system_prompt?: string | null;
+  global_system_prompt_enabled?: boolean;
 }
 
 export interface FanoutResult {

@@ -1172,6 +1172,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     alert_webhook_url: z.string().nullable().optional(),
     budget_action: z.enum(["warn", "block"]).optional(),
     global_budget_usd: z.number().nullable().optional(),
+    global_system_prompt: z.string().nullable().optional(),
+    global_system_prompt_enabled: z.boolean().optional(),
   });
   function effectiveConfig() {
     const sStrategy = store.getSetting("strategy");
@@ -1204,8 +1206,61 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         source: sBudget ? "db" : "env",
         spentMonthToDate: Math.round(store.totalMonthSpend() * 1e6) / 1e6,
       },
+      global_system_prompt: {
+        value: store.getSetting("gsp_text") ?? "",
+        source: store.getSetting("gsp_text") ? "db" : "default",
+      },
+      global_system_prompt_enabled: {
+        value: store.getSetting("gsp_enabled") === "1",
+        source: store.getSetting("gsp_enabled") ? "db" : "default",
+      },
     };
   }
+
+  // ---- API Endpoint page data (OmniRoute-style) ----
+  app.get("/api/endpoint-info", (_req: Request, res: Response) => {
+    const allModels: string[] = [];
+    for (const p of providers) for (const m of p.models) allModels.push(m);
+    const count = (re: RegExp) => allModels.filter((m) => re.test(m)).length;
+    const SPECIAL = /embed|dall-e|flux|imagen|stable|sdxl|whisper|transcri|text-to-speech|rerank|veo|sora|music|suno|udio/i;
+    const chat = allModels.filter((m) => !SPECIAL.test(m)).length;
+    const combos = store.listCombos().filter((c) => c.enabled !== false).length;
+    const ep = (
+      group: string,
+      name: string,
+      path: string,
+      models: number | null,
+      tag?: string,
+      note?: string,
+    ) => ({ group, name, path, models, tag, note });
+    const endpoints = [
+      ep("Core APIs", "Chat Completions", "/v1/chat/completions", chat),
+      ep("Core APIs", "Responses", "/v1/responses", chat),
+      ep("Core APIs", "Completions (Legacy)", "/v1/completions", chat),
+      ep("Core APIs", "Messages", "/v1/messages", chat, "ANTHROPIC"),
+      ep("Media & Multi-modal", "Embeddings", "/v1/embeddings", count(/embed/i)),
+      ep("Media & Multi-modal", "Image Generation", "/v1/images/generations", count(/dall-e|flux|imagen|stable|sdxl|image/i)),
+      ep("Media & Multi-modal", "Image Edits", "/v1/images/edits", count(/dall-e|flux|imagen|stable|sdxl|image/i)),
+      ep("Media & Multi-modal", "Audio Transcription", "/v1/audio/transcriptions", count(/whisper|transcri/i)),
+      ep("Media & Multi-modal", "Text to Speech", "/v1/audio/speech", count(/tts|text-to-speech|speech/i)),
+      ep("Media & Multi-modal", "Music Generation", "/v1/music/generations", count(/music|suno|udio/i)),
+      ep("Media & Multi-modal", "Video Generation", "/v1/videos/generations", count(/veo|sora|video|kling|runway/i)),
+      ep("Search & Discovery", "Web Search", "/v1/search", null, undefined, "provider-backed"),
+      ep("Utility & Management", "Rerank", "/v1/rerank", count(/rerank/i)),
+      ep("Utility & Management", "Moderations", "/v1/moderations", null, undefined, "provider-backed"),
+      ep("Utility & Management", "Batch API", "/v1/batches", null, "OPENAI", "needs a supporting provider"),
+      ep("Utility & Management", "Files API", "/v1/files", null, undefined, "needs a supporting provider"),
+      ep("Utility & Management", "List Models", "/v1/models", allModels.length + combos + 1),
+    ];
+    res.json({
+      version: "0.1.0",
+      port: config.port,
+      totalModels: allModels.length + combos + 1,
+      endpointCount: endpoints.length,
+      connectedProviders: providers.length,
+      endpoints,
+    });
+  });
   app.get("/api/config", (_req: Request, res: Response) => {
     res.json(effectiveConfig());
   });
@@ -1243,6 +1298,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       alerter.setWebhookUrl(b.alert_webhook_url ?? undefined);
     }
     if (b.budget_action !== undefined) store.setSetting("budget_action", b.budget_action);
+    if (b.global_system_prompt !== undefined) {
+      store.setSetting("gsp_text", b.global_system_prompt ?? "");
+    }
+    if (b.global_system_prompt_enabled !== undefined) {
+      store.setSetting("gsp_enabled", b.global_system_prompt_enabled ? "1" : "0");
+    }
     if (b.global_budget_usd !== undefined) {
       if (b.global_budget_usd != null && !(b.global_budget_usd > 0)) {
         res.status(400).json({ error: { message: "global_budget_usd must be positive", type: "bad_request" } });

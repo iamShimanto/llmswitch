@@ -227,6 +227,7 @@ export const bn: Record<string, string> = {
   "nav.freeTiers": "ফ্রি টায়ার",
   "nav.health": "হেলথ",
   "nav.inspector": "ইনস্পেক্টর",
+  "nav.endpoint": "API এন্ডপয়েন্ট",
   "nav.live": "লাইভ",
   "live.title": "লাইভ রিকোয়েস্ট",
   "live.today": "আজ",

@@ -227,6 +227,7 @@ export const en: Record<string, string> = {
   "nav.freeTiers": "Free Tiers",
   "nav.health": "Health",
   "nav.inspector": "Inspector",
+  "nav.endpoint": "API Endpoint",
   "nav.live": "Live",
   "live.title": "Live requests",
   "live.today": "Today",

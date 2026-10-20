@@ -6,6 +6,7 @@ import { initTheme } from "./theme";
 import { ThemeToggle } from "./components/ThemeToggle";
 import Home from "./pages/Home";
 import Providers from "./pages/Providers";
+import Endpoint from "./pages/Endpoint";
 import Live from "./pages/Live";
 import Usage from "./pages/Usage";
 import Keys from "./pages/Keys";
@@ -70,6 +71,7 @@ const SECTIONS: Section[] = [
     labelKey: "nav.overview",
     pages: [
       { id: "home", labelKey: "nav.overview" },
+      { id: "endpoint", labelKey: "nav.endpoint" },
       { id: "onboarding", labelKey: "nav.onboarding" },
       { id: "analytics", labelKey: "nav.analytics" },
       { id: "activity", labelKey: "nav.activity" },
@@ -151,7 +153,7 @@ for (const sec of SECTIONS) for (const p of sec.pages) PAGE_BY_ID.set(p.id, p);
 const pg = (id: string): Page => PAGE_BY_ID.get(id)!;
 
 const PAGE_ICONS: Record<string, string> = {
-  home: "🏠", providers: "🔌", live: "📡", models: "🧠", combos: "🧬",
+  home: "🏠", endpoint: "🌐", providers: "🔌", live: "📡", models: "🧠", combos: "🧬",
   playground: "🎮", routing: "🧭", keys: "🔑", usage: "📊", analytics: "📈",
   quotas: "🥧", settings: "⚙️", sessions: "🔐", limits: "🚦", costs: "💰",
   batches: "📦", webhooks: "🪝", audit: "📜", apimanager: "🗂️",
@@ -166,7 +168,7 @@ const PAGE_ICONS: Record<string, string> = {
 
 /** Daily-use pages — always visible at the top of the sidebar. */
 const NAV_MAIN: Page[] = [
-  "home", "providers", "live", "models", "combos", "playground", "routing",
+  "home", "endpoint", "providers", "live", "models", "combos", "playground", "routing",
   "keys", "usage", "analytics", "quotas",
 ].map(pg);
 /** Pinned at the very bottom of the sidebar. */
@@ -453,6 +455,7 @@ function AppInner() {
         {tab === "analytics" && <Analytics />}
         {tab === "activity" && <Activity />}
         {tab === "providers" && <Providers />}
+        {tab === "endpoint" && <Endpoint />}
         {tab === "live" && <Live />}
         {tab === "models" && <Models />}
         {tab === "leaderboard" && <Leaderboard />}
