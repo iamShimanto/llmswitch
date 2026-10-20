@@ -162,6 +162,10 @@ export const api = {
     req<{ daily: Array<{ day: string; total: number }>; projectedMonthly: number }>("/api/costs/forecast"),
   quotas: () => req<{ providers: QuotaProvider[] }>("/api/quotas"),
   usageDaily: (days = 30) => req<{ days: DailyUsageRow[] }>(`/api/usage/daily?days=${days}`),
+  analyticsSummary: (days = 30, keyId?: string) =>
+    req<AnalyticsSummary>(
+      `/api/analytics/summary?days=${days}${keyId ? `&key=${encodeURIComponent(keyId)}` : ""}`,
+    ),
   sessions: () => req<{ sessions: SessionMeta[] }>("/api/sessions"),
   importSession: (provider: string, cookies: string, cookieDomain?: string) =>
     req<{ ok: boolean; connected: boolean }>("/api/sessions/import", {
@@ -204,6 +208,36 @@ export interface QuotaProvider {
   calls: number;
   errors: number;
   telemetry: { remaining: number | null; limit: number | null; resetAt: number | null } | null;
+}
+
+export interface AnalyticsSummary {
+  totals: {
+    requests: number;
+    errors: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    avgLatencyMs: number;
+  };
+  series: Array<{
+    day: string;
+    requests: number;
+    errors: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+  }>;
+  byProvider: Array<{
+    provider: string;
+    requests: number;
+    errors: number;
+    inputTokens: number;
+    outputTokens: number;
+    costUsd: number;
+    avgLatencyMs: number;
+  }>;
+  byModel: Array<{ model: string; provider: string; requests: number; tokens: number; costUsd: number }>;
+  infra: { apiKeys: number; providersConnected: number; modelsTotal: number };
 }
 
 export interface DailyUsageRow {

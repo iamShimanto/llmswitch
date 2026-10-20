@@ -298,6 +298,124 @@ export class Store {
   }
 
   /** Daily request counts + spend for the last N days (oldest → newest). */
+  /** Full analytics aggregate over usage_log since a timestamp. */
+  analyticsSummary(sinceTs: number, keyId?: string): {
+    totals: {
+      requests: number;
+      errors: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      avgLatencyMs: number;
+    };
+    series: Array<{
+      day: string;
+      requests: number;
+      errors: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+    }>;
+    byProvider: Array<{
+      provider: string;
+      requests: number;
+      errors: number;
+      inputTokens: number;
+      outputTokens: number;
+      costUsd: number;
+      avgLatencyMs: number;
+    }>;
+    byModel: Array<{
+      model: string;
+      provider: string;
+      requests: number;
+      tokens: number;
+      costUsd: number;
+    }>;
+  } {
+    const keyClause = keyId ? " AND key_id = ?" : "";
+    const args = keyId ? [sinceTs, keyId] : [sinceTs];
+    const totals = this.db
+      .prepare(
+        `SELECT COUNT(*) AS requests,
+                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                COALESCE(SUM(prompt_tokens), 0) AS inputTokens,
+                COALESCE(SUM(completion_tokens), 0) AS outputTokens,
+                COALESCE(SUM(cost_usd), 0) AS costUsd,
+                COALESCE(AVG(latency_ms), 0) AS avgLatencyMs
+         FROM usage_log WHERE ts >= ?${keyClause}`,
+      )
+      .get(...args) as Record<string, number>;
+    const series = this.db
+      .prepare(
+        `SELECT strftime('%Y-%m-%d', ts / 1000, 'unixepoch') AS day,
+                COUNT(*) AS requests,
+                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                COALESCE(SUM(prompt_tokens), 0) AS inputTokens,
+                COALESCE(SUM(completion_tokens), 0) AS outputTokens,
+                COALESCE(SUM(cost_usd), 0) AS costUsd
+         FROM usage_log WHERE ts >= ?${keyClause}
+         GROUP BY day ORDER BY day ASC`,
+      )
+      .all(...args) as Array<Record<string, unknown>>;
+    const byProvider = this.db
+      .prepare(
+        `SELECT provider, COUNT(*) AS requests,
+                SUM(CASE WHEN status != 'ok' THEN 1 ELSE 0 END) AS errors,
+                COALESCE(SUM(prompt_tokens), 0) AS inputTokens,
+                COALESCE(SUM(completion_tokens), 0) AS outputTokens,
+                COALESCE(SUM(cost_usd), 0) AS costUsd,
+                COALESCE(AVG(latency_ms), 0) AS avgLatencyMs
+         FROM usage_log WHERE ts >= ?${keyClause}
+         GROUP BY provider ORDER BY requests DESC`,
+      )
+      .all(...args) as Array<Record<string, unknown>>;
+    const byModel = this.db
+      .prepare(
+        `SELECT model, provider, COUNT(*) AS requests,
+                COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tokens,
+                COALESCE(SUM(cost_usd), 0) AS costUsd
+         FROM usage_log WHERE ts >= ?${keyClause}
+         GROUP BY model, provider ORDER BY requests DESC LIMIT 12`,
+      )
+      .all(...args) as Array<Record<string, unknown>>;
+    const num = (v: unknown) => Number(v ?? 0);
+    return {
+      totals: {
+        requests: num(totals.requests),
+        errors: num(totals.errors),
+        inputTokens: num(totals.inputTokens),
+        outputTokens: num(totals.outputTokens),
+        costUsd: num(totals.costUsd),
+        avgLatencyMs: num(totals.avgLatencyMs),
+      },
+      series: series.map((r) => ({
+        day: String(r.day),
+        requests: num(r.requests),
+        errors: num(r.errors),
+        inputTokens: num(r.inputTokens),
+        outputTokens: num(r.outputTokens),
+        costUsd: num(r.costUsd),
+      })),
+      byProvider: byProvider.map((r) => ({
+        provider: String(r.provider),
+        requests: num(r.requests),
+        errors: num(r.errors),
+        inputTokens: num(r.inputTokens),
+        outputTokens: num(r.outputTokens),
+        costUsd: num(r.costUsd),
+        avgLatencyMs: num(r.avgLatencyMs),
+      })),
+      byModel: byModel.map((r) => ({
+        model: String(r.model),
+        provider: String(r.provider),
+        requests: num(r.requests),
+        tokens: num(r.tokens),
+        costUsd: num(r.costUsd),
+      })),
+    };
+  }
+
   dailyRequests(days = 30, now = Date.now()): Array<{ day: string; requests: number; errors: number; costUsd: number }> {
     const out: Array<{ day: string; requests: number; errors: number; costUsd: number }> = [];
     for (let i = days - 1; i >= 0; i--) {
