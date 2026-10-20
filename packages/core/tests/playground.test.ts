@@ -24,6 +24,18 @@ function ok(text: string): Response {
 
 const body = { model: "auto", messages: [{ role: "user" as const, content: "hi" }] };
 
+/** Stub router: routes via the generic executor with a mock fetch. */
+function stubRouter(fetchFn: typeof fetch) {
+  return {
+    route: async (b: { model: string; messages: typeof body.messages }) => {
+      const id = b.model.split(":")[0]!;
+      const p = prov(id);
+      const { executeProvider } = await import("../src/executor/http.js");
+      return executeProvider(p, p.defaultModel, { ...b, stream: false } as never, fetchFn);
+    },
+  };
+}
+
 describe("fanout", () => {
   it("collects results from all providers in parallel", async () => {
     const fetchFn = (async (url: string) => {
@@ -31,7 +43,7 @@ describe("fanout", () => {
       return ok(`reply from ${url}`);
     }) as typeof fetch;
 
-    const results = await fanout([prov("a"), prov("b"), prov("c")], body, fetchFn);
+    const results = await fanout([prov("a"), prov("b"), prov("c")], body, stubRouter(fetchFn) as never);
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.ok)).toBe(true);
     expect(results.map((r) => r.providerId).sort()).toEqual(["a", "b", "c"]);
@@ -44,12 +56,30 @@ describe("fanout", () => {
       return ok("fine");
     }) as typeof fetch;
 
-    const results = await fanout([prov("a"), prov("b", "https://other.com")], body, fetchFn);
+    const results = await fanout([prov("a"), prov("b", "https://other.com")], body, stubRouter(fetchFn) as never);
     const a = results.find((r) => r.providerId === "a")!;
     const b = results.find((r) => r.providerId === "b")!;
     expect(a.ok).toBe(false);
     expect(a.error).toBeTruthy();
     expect(b.ok).toBe(true);
+  });
+
+  it("counts a silent fallback to another provider as a failure", async () => {
+    const fallbackRouter = {
+      route: async (b: { model: string }) => ({
+        providerId: "someone-else",
+        model: b.model,
+        latencyMs: 1,
+        response: {
+          id: "x", model: "m",
+          choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        },
+      }),
+    };
+    const results = await fanout([prov("a")], body, fallbackRouter as never);
+    expect(results[0]!.ok).toBe(false);
+    expect(results[0]!.error).toContain("fell back");
   });
 });
 

@@ -1655,6 +1655,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
           request: [{ role: "user", content: "Reply with the single word: ok" }],
           responsePreview: `fell back to ${result.providerId}`,
         });
+        store.logUsage({
+          keyId: null, provider: p.id, model, promptTokens: 0, completionTokens: 0,
+          latencyMs, status: "error", costUsd: 0,
+        });
         res.json({
           ok: false,
           model,
@@ -1678,6 +1682,16 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         request: [{ role: "user", content: "Reply with the single word: ok" }],
         responsePreview: text.slice(0, 500),
       });
+      store.logUsage({
+        keyId: null,
+        provider: p.id,
+        model,
+        promptTokens: result.response?.usage?.prompt_tokens ?? 0,
+        completionTokens: result.response?.usage?.completion_tokens ?? 0,
+        latencyMs,
+        status: "ok",
+        costUsd: costUsd(p.id, model, result.response?.usage?.prompt_tokens ?? 0, result.response?.usage?.completion_tokens ?? 0),
+      });
       res.json({ ok: true, model, latencyMs, text: text.slice(0, 120) });
     } catch (err) {
       inspector.record({
@@ -1693,6 +1707,10 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         costUsd: 0,
         request: [{ role: "user", content: "Reply with the single word: ok" }],
         responsePreview: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+      });
+      store.logUsage({
+        keyId: null, provider: p.id, model, promptTokens: 0, completionTokens: 0,
+        latencyMs: Date.now() - started, status: "error", costUsd: 0,
       });
       res.json({
         ok: false,
@@ -1867,7 +1885,37 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.status(400).json({ error: { message: "no matching connected providers", type: "bad_request" } });
       return;
     }
-    const results = await fanout(selected, { model: "auto", ...rest });
+    const results = await fanout(selected, { model: "auto", ...rest }, router);
+    // Playground traffic counts like real traffic: inspector (→ Live/Logs)
+    // + usage_log (→ Analytics).
+    for (const r of results) {
+      const promptTokens = r.promptTokens ?? 0;
+      const completionTokens = r.completionTokens ?? 0;
+      inspector.record({
+        keyId: null,
+        provider: r.providerId,
+        model: r.model,
+        strategy: "playground",
+        status: r.ok ? "ok" : "error",
+        latencyMs: r.latencyMs,
+        cached: false,
+        promptTokens,
+        completionTokens,
+        costUsd: r.ok ? costUsd(r.providerId, r.model, promptTokens, completionTokens) : 0,
+        request: rest.messages.map((m) => ({ role: m.role, content: m.content ?? "" })),
+        responsePreview: r.ok ? (r.text ?? "").slice(0, 500) : (r.error ?? "").slice(0, 500),
+      });
+      store.logUsage({
+        keyId: null,
+        provider: r.providerId,
+        model: r.model,
+        promptTokens,
+        completionTokens,
+        latencyMs: r.latencyMs,
+        status: r.ok ? "ok" : "error",
+        costUsd: r.ok ? costUsd(r.providerId, r.model, promptTokens, completionTokens) : 0,
+      });
+    }
     res.json({ results });
   });
 
