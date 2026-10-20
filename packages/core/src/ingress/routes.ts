@@ -25,7 +25,7 @@ import type { Store } from "../store/db.js";
 import { registerMitmRoutes } from "../mitm/routes.js";
 import { registerAntigravityOAuthRoutes } from "../oauth/antigravity.js";
 import { CLAUDE_OAUTH_FLOW, CODEX_OAUTH_FLOW, registerProviderOAuthRoutes } from "../oauth/providerOAuth.js";
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -1314,6 +1314,59 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     }
     store.setSetting(`provider_key:${def.envKey}`, key);
     store.audit("provider.key_saved", def.id, `env ${def.envKey}`);
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
+  // Token-paste connect for OAuth providers without a browser flow
+  // (copilot, cursor, kiro, trae, zed, clinepass, codebuddy, …). Every OAuth
+  // executor reads the same session shape — {accessToken, refreshToken?} in
+  // <sessions>/<id>.json — so pasting a token connects it immediately.
+  app.post("/api/oauth/:id/token", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    if ((def.authType ?? "") !== "oauth") {
+      res.status(400).json({ error: { message: `provider ${def.id} is not an OAuth provider`, type: "bad_request" } });
+      return;
+    }
+    const accessToken = typeof req.body?.accessToken === "string" ? req.body.accessToken.trim() : "";
+    if (!accessToken) {
+      res.status(400).json({ error: { message: "accessToken is required", type: "bad_request" } });
+      return;
+    }
+    const session: Record<string, unknown> = { accessToken, savedAt: Date.now(), kind: "oauth-token" };
+    if (typeof req.body?.refreshToken === "string" && req.body.refreshToken.trim()) {
+      session.refreshToken = req.body.refreshToken.trim();
+    }
+    if (typeof req.body?.userId === "string" && req.body.userId.trim()) {
+      session.userId = req.body.userId.trim();
+    }
+    const dir = sessionsDir();
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${def.id}.json`);
+    writeFileSync(file, JSON.stringify(session, null, 2), { mode: 0o600 });
+    try {
+      chmodSync(file, 0o600);
+    } catch {
+      /* best effort */
+    }
+    store.audit("oauth.token_saved", def.id, "token paste");
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
+  app.delete("/api/oauth/:id/token", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    const file = join(sessionsDir(), `${def.id}.json`);
+    if (existsSync(file)) unlinkSync(file);
+    store.audit("oauth.token_removed", def.id, "token disconnect");
     deps.refreshProviders?.();
     res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
   });

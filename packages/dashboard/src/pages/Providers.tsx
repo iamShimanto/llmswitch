@@ -19,6 +19,39 @@ function ProviderDetail({
   const [savingKey, setSavingKey] = useState(false);
   const [keyMsg, setKeyMsg] = useState("");
 
+  const [tokenInput, setTokenInput] = useState("");
+  const [refreshInput, setRefreshInput] = useState("");
+  const [savingToken, setSavingToken] = useState(false);
+  const [tokenMsg, setTokenMsg] = useState("");
+
+  const saveToken = async () => {
+    setSavingToken(true);
+    setTokenMsg("");
+    try {
+      const r = await api.oauthTokenSave(p.id, tokenInput, refreshInput || undefined);
+      if (r.connected) {
+        setTokenInput("");
+        setRefreshInput("");
+        onChanged();
+      } else {
+        setTokenMsg("Token saved, but the provider did not connect — check the token.");
+      }
+    } catch (e) {
+      setTokenMsg(String(e));
+    } finally {
+      setSavingToken(false);
+    }
+  };
+
+  const removeToken = async () => {
+    try {
+      await api.oauthTokenRemove(p.id);
+      onChanged();
+    } catch {
+      /* ignore */
+    }
+  };
+
   const saveKey = async () => {
     setSavingKey(true);
     setKeyMsg("");
@@ -137,6 +170,18 @@ function ProviderDetail({
         </div>
       </div>
 
+      {connected && p.authType === "oauth" && !["antigravity", "claude", "codex"].includes(p.id) && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+          <p className="text-sm text-zinc-400">Connected with a pasted token.</p>
+          <button
+            onClick={removeToken}
+            className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800"
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
+
       {!connected && (
         <div className={`${card} mb-4 border-dashed`}>
           <h2 className="mb-1 font-semibold">Not connected</h2>
@@ -171,11 +216,38 @@ function ProviderDetail({
                 Providers page, then come back here to test its models.
               </p>
             ) : (
-              <p className="text-sm text-zinc-400">
-                This provider signs in with a device/token flow on the machine running the
-                gateway (its login session is a local file). Sign in there, or import its
-                session JSON on the Sessions page — then it will show as connected here.
-              </p>
+              <>
+                <p className="mb-3 text-sm text-zinc-400">
+                  Paste an access token from your {p.name} account to connect it. The token is
+                  stored only in this gateway's local session store and works immediately.
+                </p>
+                <div className="grid gap-2">
+                  <input
+                    type="password"
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder="Access token"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="password"
+                    value={refreshInput}
+                    onChange={(e) => setRefreshInput(e.target.value)}
+                    placeholder="Refresh token (optional)"
+                    className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
+                  />
+                  <div>
+                    <button
+                      onClick={saveToken}
+                      disabled={savingToken || !tokenInput.trim()}
+                      className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+                    >
+                      {savingToken ? "Connecting…" : "Connect with token"}
+                    </button>
+                  </div>
+                  {tokenMsg && <p className="text-sm text-red-400">{tokenMsg}</p>}
+                </div>
+              </>
             )
           ) : p.authType === "cookie" ? (
             <p className="text-sm text-zinc-400">
