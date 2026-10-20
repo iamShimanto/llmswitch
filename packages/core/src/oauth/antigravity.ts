@@ -42,6 +42,8 @@ export interface AntigravityOAuthDeps {
   fetchFn?: typeof fetch;
   /** Defaults to the pack's exchange+bootstrap+save. Overridable in tests. */
   completeLogin?: (code: string, redirectUri: string, fetchFn: typeof fetch) => Promise<SavedSession>;
+  /** Called after connect/disconnect so the gateway re-resolves providers without a restart. */
+  onCredentialsChanged?: () => void;
 }
 
 export interface OAuthStatus {
@@ -105,6 +107,7 @@ export function registerAntigravityOAuthRoutes(app: Express, deps: AntigravityOA
     try {
       const saved = await completeLogin(code, entry.redirectUri, fetchFn);
       store?.audit("oauth.antigravity.connected", saved.email ?? saved.provider ?? "antigravity", "browser flow");
+      deps.onCredentialsChanged?.();
       res.redirect(302, "/?oauth=antigravity");
     } catch (err) {
       // Never echo token values or upstream bodies back to the browser.
@@ -126,6 +129,7 @@ export function registerAntigravityOAuthRoutes(app: Express, deps: AntigravityOA
   // ---- Disconnect ----
   app.post("/api/oauth/antigravity/disconnect", (_req: Request, res: Response) => {
     deleteSession(ANTIGRAVITY_SESSION_NAME);
+    deps.onCredentialsChanged?.();
     store?.audit("oauth.antigravity.disconnected", "antigravity", "browser flow");
     res.json({ connected: false });
   });

@@ -243,7 +243,7 @@ async function* vertexSsePassthrough(
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     const parts = buf.split("\n\n");
     buf = parts.pop() ?? "";
     for (const part of parts) {

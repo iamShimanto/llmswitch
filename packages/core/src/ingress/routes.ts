@@ -68,6 +68,8 @@ export interface RouteDeps {
   routingLog: RoutingEventLog;
   /** Outbound fetch (Google OAuth etc.). Defaults to global fetch; tests inject a mock. */
   fetchFn?: typeof fetch;
+  /** Re-resolve connected providers after credential changes (OAuth connect, key add…). */
+  refreshProviders?: () => void;
 }
 
 export function registerRoutes(app: Express, deps: RouteDeps): void {
@@ -1245,6 +1247,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ---- Dashboard API (used by the SPA) ----
   app.get("/api/providers", (_req: Request, res: Response) => {
+    deps.refreshProviders?.();
     res.json(
       providers.map((p) => {
         const pool = router.pools.get(p.id);
@@ -1569,11 +1572,11 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   registerMitmRoutes(app, { providers, inspector, store });
 
   // ---- Antigravity browser OAuth (callback exempt from admin gate; state-protected) ----
-  registerAntigravityOAuthRoutes(app, { config, store, fetchFn: deps.fetchFn });
+  registerAntigravityOAuthRoutes(app, { config, store, fetchFn: deps.fetchFn, onCredentialsChanged: deps.refreshProviders });
 
   // ---- Claude + Codex PKCE browser OAuth (same exemptions; mock-tested, needs live login) ----
-  registerProviderOAuthRoutes(app, CLAUDE_OAUTH_FLOW, { config, store, fetchFn: deps.fetchFn });
-  registerProviderOAuthRoutes(app, CODEX_OAUTH_FLOW, { config, store, fetchFn: deps.fetchFn });
+  registerProviderOAuthRoutes(app, CLAUDE_OAUTH_FLOW, { config, store, fetchFn: deps.fetchFn, onCredentialsChanged: deps.refreshProviders });
+  registerProviderOAuthRoutes(app, CODEX_OAUTH_FLOW, { config, store, fetchFn: deps.fetchFn, onCredentialsChanged: deps.refreshProviders });
 
   // ---- Skills (reusable system-prompt packs) ----
   const skills = new SkillRegistry();

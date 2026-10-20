@@ -63,6 +63,8 @@ export interface ProviderOAuthDeps {
   fetchFn?: typeof fetch;
   /** Defaults to the flow's pack login. Overridable in tests. */
   completeLogin?: ProviderOAuthFlow["completeLogin"];
+  /** Called after connect/disconnect so the gateway re-resolves providers without a restart. */
+  onCredentialsChanged?: () => void;
 }
 
 export interface ProviderOAuthStatus {
@@ -131,6 +133,7 @@ export function registerProviderOAuthRoutes(app: Express, flow: ProviderOAuthFlo
     try {
       const saved = await completeLogin(code, entry.redirectUri, entry.codeVerifier, fetchFn);
       store?.audit(`oauth.${flow.id}.connected`, saved.email ?? saved.accountId ?? flow.id, "browser flow");
+      deps.onCredentialsChanged?.();
       res.redirect(302, `/?oauth=${flow.id}`);
     } catch (err) {
       // Never echo token values or upstream bodies back to the browser.
@@ -152,6 +155,7 @@ export function registerProviderOAuthRoutes(app: Express, flow: ProviderOAuthFlo
   // ---- Disconnect ----
   app.post(`/api/oauth/${flow.id}/disconnect`, (_req: Request, res: Response) => {
     deleteSession(flow.sessionName);
+    deps.onCredentialsChanged?.();
     store?.audit(`oauth.${flow.id}.disconnected`, flow.id, "browser flow");
     res.json({ connected: false });
   });
