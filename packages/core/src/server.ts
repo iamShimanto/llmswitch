@@ -90,7 +90,7 @@ export function createServer(
   const dashboardDir = join(process.cwd(), "packages", "dashboard", "dist");
   const hasDashboard = existsSync(join(dashboardDir, "index.html"));
 
-  const sessions = new DashboardSessions();
+  const sessions = new DashboardSessions(store);
   app.use(createAuth(store, limiter, sessions));
   registerDashboardAuthRoutes(app, store, sessions);
   // Re-resolve connected providers IN PLACE (same array reference the

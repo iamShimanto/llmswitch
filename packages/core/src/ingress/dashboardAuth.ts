@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import type { Store } from "../store/db.js";
 
@@ -38,31 +38,35 @@ function verifyPassword(password: string, stored: string): boolean {
 }
 
 export class DashboardSessions {
-  private sessions = new Map<string, number>();
+  constructor(private store: Store) {}
+
+  private hash(token: string): string {
+    return createHash("sha256").update(token).digest("hex");
+  }
 
   issue(): string {
     const token = randomBytes(32).toString("hex");
-    this.sessions.set(token, Date.now() + SESSION_TTL_MS);
+    this.store.createDashboardSession(this.hash(token), Date.now() + SESSION_TTL_MS);
     return token;
   }
 
   valid(token: string | undefined | null): boolean {
     if (!token) return false;
-    const exp = this.sessions.get(token);
-    if (!exp) return false;
+    const exp = this.store.dashboardSessionExpiry(this.hash(token));
+    if (exp === null) return false;
     if (exp < Date.now()) {
-      this.sessions.delete(token);
+      this.store.deleteDashboardSession(this.hash(token));
       return false;
     }
     return true;
   }
 
   revoke(token: string | undefined | null): void {
-    if (token) this.sessions.delete(token);
+    if (token) this.store.deleteDashboardSession(this.hash(token));
   }
 
   revokeAll(): void {
-    this.sessions.clear();
+    this.store.clearDashboardSessions();
   }
 }
 
