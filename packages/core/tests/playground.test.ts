@@ -25,11 +25,12 @@ function ok(text: string): Response {
 const body = { model: "auto", messages: [{ role: "user" as const, content: "hi" }] };
 
 /** Stub router: routes via the generic executor with a mock fetch. */
-function stubRouter(fetchFn: typeof fetch) {
+function stubRouter(fetchFn: typeof fetch, providers: ResolvedProvider[]) {
+  const byId = new Map(providers.map((p) => [p.id, p]));
   return {
     route: async (b: { model: string; messages: typeof body.messages }) => {
       const id = b.model.split(":")[0]!;
-      const p = prov(id);
+      const p = byId.get(id) ?? prov(id);
       const { executeProvider } = await import("../src/executor/http.js");
       return executeProvider(p, p.defaultModel, { ...b, stream: false } as never, fetchFn);
     },
@@ -43,7 +44,7 @@ describe("fanout", () => {
       return ok(`reply from ${url}`);
     }) as typeof fetch;
 
-    const results = await fanout([prov("a"), prov("b"), prov("c")], body, stubRouter(fetchFn) as never);
+    const results = await fanout([prov("a"), prov("b"), prov("c")], body, stubRouter(fetchFn, [prov("a"), prov("b"), prov("c")]) as never);
     expect(results).toHaveLength(3);
     expect(results.every((r) => r.ok)).toBe(true);
     expect(results.map((r) => r.providerId).sort()).toEqual(["a", "b", "c"]);
@@ -56,7 +57,8 @@ describe("fanout", () => {
       return ok("fine");
     }) as typeof fetch;
 
-    const results = await fanout([prov("a"), prov("b", "https://other.com")], body, stubRouter(fetchFn) as never);
+    const pair = [prov("a"), prov("b", "https://other.com")];
+    const results = await fanout(pair, body, stubRouter(fetchFn, pair) as never);
     const a = results.find((r) => r.providerId === "a")!;
     const b = results.find((r) => r.providerId === "b")!;
     expect(a.ok).toBe(false);
