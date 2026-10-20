@@ -370,6 +370,12 @@ function ProviderDetail({
         <DeviceConnectCard onChanged={onChanged} />
       )}
 
+      {["antigravity", "claude", "codex"].includes(p.id) && (
+        <div className="mb-4">
+          <OAuthConnectCard cfg={OAUTH_PANEL.find((c) => c.id === p.id)!} />
+        </div>
+      )}
+
       {!connected && (
         <div className={`${card} mb-4 border-dashed`}>
           <h2 className="mb-1 font-semibold">Not connected</h2>
@@ -399,7 +405,7 @@ function ProviderDetail({
             </>
           ) : p.authType === "oauth" ? (
             ["antigravity", "claude", "codex"].includes(p.id) ? (
-              <OAuthConnectCard cfg={OAUTH_PANEL.find((c) => c.id === p.id)!} />
+              <p className="text-sm text-zinc-400">Use the sign-in card above to connect.</p>
             ) : (
               <>
                 <p className="mb-3 text-sm text-zinc-400">
@@ -592,6 +598,7 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
   const [phase, setPhase] = useState<"idle" | "waiting" | "failed">("idle");
   const [userCode, setUserCode] = useState("");
   const [acctName, setAcctName] = useState("");
+  const [adding, setAdding] = useState(false);
   const [verifyUrl, setVerifyUrl] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -632,6 +639,8 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
           if (p.status === "connected") {
             clearInterval(timer);
             setPhase("idle");
+            setAdding(false);
+            setAcctName("");
             setStatus({ email: p.email, tier: p.tier, subsActive: p.subsActive, requirePayment: p.requirePayment });
             onChanged();
           } else if (p.status === "failed" || p.status === "expired") {
@@ -663,21 +672,37 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-900 p-4">
       <h2 className="mb-1 font-semibold">Connect your Muse account</h2>
-      {status ? (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-zinc-400">
-            Connected{status.email ? <> as <b className="text-zinc-200">{status.email}</b></> : ""}
-            {status.tier ? <> · {status.tier}</> : ""}
-            {status.subsActive === false ? (
-              <span className="text-amber-400"> · subscription not active — requests may need payment setup</span>
-            ) : null}
-          </p>
-          <button
-            onClick={disconnect}
-            className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800"
-          >
-            Disconnect
-          </button>
+      {status && !adding ? (
+        <div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-zinc-400">
+              Connected{status.email ? <> as <b className="text-zinc-200">{status.email}</b></> : ""}
+              {status.tier ? <> · {status.tier}</> : ""}
+              {status.subsActive === false ? (
+                <span className="text-amber-400"> · subscription not active — requests may need payment setup</span>
+              ) : null}
+            </p>
+            <button
+              onClick={disconnect}
+              className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800"
+            >
+              Disconnect
+            </button>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <input
+              value={acctName}
+              onChange={(e) => setAcctName(e.target.value)}
+              placeholder="New account name (e.g. Second account)"
+              className="min-w-52 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+            />
+            <button
+              onClick={() => setAdding(true)}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
+            >
+              Add another account
+            </button>
+          </div>
         </div>
       ) : phase === "waiting" ? (
         <div>
@@ -830,6 +855,13 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
                 {t("oauth.connectedBadge")}
               </span>
               <button
+                onClick={connect}
+                disabled={busy}
+                className="rounded-lg bg-emerald-600 px-4 py-1.5 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+              >
+                Add account
+              </button>
+              <button
                 onClick={disconnect}
                 disabled={busy}
                 className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800 disabled:opacity-50"
@@ -848,7 +880,7 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
           )}
         </div>
       </div>
-      {!status.connected && (
+      {(!status.connected || started) && (
         <div className="mt-3 rounded-lg border border-dashed border-zinc-700 p-3">
           <p className="text-xs text-zinc-400">
             A sign-in tab opened. After you approve, your browser may land on a{" "}
