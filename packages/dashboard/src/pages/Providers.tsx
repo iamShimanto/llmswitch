@@ -394,6 +394,19 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
     }
   };
 
+  useEffect(() => {
+    if (!started || status?.connected) return;
+    const iv = setInterval(async () => {
+      try {
+        const s = await api.oauthStatus(cfg.id);
+        if (s.connected) setStatus(s);
+      } catch {
+        /* keep polling */
+      }
+    }, 4000);
+    return () => clearInterval(iv);
+  }, [started, status?.connected, cfg.id]);
+
   const disconnect = async () => {
     setBusy(true);
     setError("");
@@ -454,7 +467,7 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
           )}
         </div>
       </div>
-      {started && !status.connected && (
+      {!status.connected && (
         <div className="mt-3 rounded-lg border border-dashed border-zinc-700 p-3">
           <p className="text-xs text-zinc-400">
             A sign-in tab opened. After you approve, your browser may land on a{" "}
