@@ -5,6 +5,7 @@ import { chatToResponses, responsesToChat } from "./responses.js";
 import { fetchPageText, mapSiteLinks, webSearch } from "../search/index.js";
 import { RoutingEventLog } from "../router/events.js";
 import { antigravityAccountQuotas } from "../quota/antigravityQuota.js";
+import { oauthAccountQuotas } from "../quota/oauthQuota.js";
 import { AUTO_TEMPLATES, autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import type { Alerter } from "../alerts/index.js";
 import { costUsd, priceInfo, pricingCatalog, setPriceOverrides } from "../billing/prices.js";
@@ -1369,6 +1370,18 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
               .filter((a) => a.enabled)
               .map((a) => ({ id: a.id, label: a.label }));
             entry.accountQuotas = await antigravityAccountQuotas(process.env, accts);
+          } catch {
+            entry.accountQuotas = [];
+          }
+        }
+        // Claude / Codex subscription usage windows (live, per account).
+        if (p.id === "claude" || p.id === "codex") {
+          try {
+            const accts = store
+              .listAccounts(p.id)
+              .filter((a) => a.enabled)
+              .map((a) => ({ id: a.id, label: a.label }));
+            entry.accountQuotas = await oauthAccountQuotas(p.id, process.env, accts);
           } catch {
             entry.accountQuotas = [];
           }
