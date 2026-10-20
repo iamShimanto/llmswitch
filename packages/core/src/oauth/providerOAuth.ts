@@ -12,6 +12,7 @@ import {
   type SavedSession,
 } from "@llmswitch/web-session";
 import type { AppConfig } from "../config.js";
+import { completeAsAccount } from "./sessions.js";
 import type { Store } from "../store/db.js";
 
 /**
@@ -166,10 +167,23 @@ export function registerProviderOAuthRoutes(app: Express, flow: ProviderOAuthFlo
       return;
     }
     try {
-      const saved = await completeLogin(code, entry.redirectUri, entry.codeVerifier, fetchFn);
+      const accountLabel = typeof req.body?.accountLabel === "string" ? req.body.accountLabel.trim() : "";
+      let saved: SavedSession;
+      let accountId: string | null = null;
+      if (accountLabel && store) {
+        ({ result: saved, accountId } = await completeAsAccount(
+          store,
+          flow.id,
+          flow.sessionName,
+          accountLabel,
+          () => completeLogin(code, entry.redirectUri, entry.codeVerifier, fetchFn),
+        ));
+      } else {
+        saved = await completeLogin(code, entry.redirectUri, entry.codeVerifier, fetchFn);
+      }
       store?.audit(`oauth.${flow.id}.connected`, saved.email ?? saved.accountId ?? flow.id, "paste flow");
       deps.onCredentialsChanged?.();
-      res.json({ connected: true, email: saved.email ?? null });
+      res.json({ connected: true, email: saved.email ?? null, ...(accountId ? { accountId } : {}) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown error";
       res.status(500).json({ error: { message: message.slice(0, 200), type: "oauth_error" } });

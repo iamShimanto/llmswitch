@@ -5,6 +5,18 @@
 > 272 provider families / 375 entries, ~296 executors, ~8k test files.
 > Legend: `[P]` = OmniRoute parity · `[N]` = New (beyond OmniRoute) · Phases: `P0` MVP · `P1` v1 · `P2` later
 
+> UPDATE 2026-10-20 (evening): **Multi-account + routing system shipped.**
+> Every provider can carry multiple named accounts (dashboard → provider →
+> Accounts): API keys, OAuth tokens, cookie sessions, browser-OAuth logins
+> and Muse device logins can all be added as separate accounts. Requests
+> rotate across accounts with a selectable strategy (round-robin /
+> least-used / priority / random — Routing page or `account_strategy`
+> config), per-account call/error stats are recorded, and usage/request
+> logs carry the serving account id. **Routing rules** (Routing page) pin a
+> model name or prefix (`gpt-*`) to an ordered provider chain with an
+> optional ordering strategy; pinned `provider:model` requests and `auto`
+> bypass rules.
+
 ---
 
 ## 1. Gateway Core API

@@ -105,9 +105,10 @@ export async function executeGrokCliChat(
   body: ChatCompletionRequest,
   fetchFn: typeof fetch,
   env: NodeJS.ProcessEnv,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
   const started = Date.now();
-  const creds = await resolveProviderToken("grok-cli", env, fetchFn);
+  const creds = await resolveProviderToken("grok-cli", env, fetchFn, accountId);
   const version = (env.GROK_CLI_CLIENT_VERSION ?? "").trim() || "1.0.41";
   const headers: Record<string, string> = {
     "content-type": "application/json",
@@ -198,9 +199,10 @@ export async function executeGitLabDuoChat(
   body: ChatCompletionRequest,
   fetchFn: typeof fetch,
   env: NodeJS.ProcessEnv,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
   const started = Date.now();
-  const creds = await resolveProviderToken("gitlab-duo", env, fetchFn);
+  const creds = await resolveProviderToken("gitlab-duo", env, fetchFn, accountId);
   const base = (env.GITLAB_DUO_BASE_URL || env.GITLAB_BASE_URL || "https://gitlab.com").trim().replace(/\/$/, "");
   const meta = creds.meta ?? {};
   const direct = meta.gitlabDirectAccess as { token?: string; headers?: Record<string, string>; expiresAt?: string } | undefined;
@@ -241,17 +243,18 @@ export async function executeOAuthProvider(
   fetchFn: typeof fetch,
   timeoutMs: number,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
   switch (provider.id) {
     case "agy": {
       // Same Google Cloud Code backend as antigravity; agy session file.
-      const r = await executeAntigravityChat(provider, model, body, fetchFn, timeoutMs, env, "agy");
+      const r = await executeAntigravityChat(provider, model, body, fetchFn, timeoutMs, env, "agy", accountId);
       return { ...r, providerId: "agy" }; // executor hard-codes "antigravity"; re-tag for accounting
     }
     case "grok-cli":
-      return executeGrokCliChat(provider, model, body, fetchFn, env);
+      return executeGrokCliChat(provider, model, body, fetchFn, env, accountId);
     case "gitlab-duo":
-      return executeGitLabDuoChat(provider, model, body, fetchFn, env);
+      return executeGitLabDuoChat(provider, model, body, fetchFn, env, accountId);
     case "devin-desktop":
       throw new UpstreamError(
         "bad_request",
@@ -262,7 +265,7 @@ export async function executeOAuthProvider(
     case "codebuddy-intl":
     case "workbuddy":
     case "openference": {
-      const creds = await resolveProviderToken(provider.id as P11IProviderId, env, fetchFn);
+      const creds = await resolveProviderToken(provider.id as P11IProviderId, env, fetchFn, accountId);
       const keyed = { ...provider, apiKey: creds.accessToken, allKeys: [creds.accessToken] };
       const stream = body.stream === true || FORCE_STREAM_IDS.has(provider.id);
       const result = await executeProvider(keyed, model, { ...body, stream }, fetchFn, timeoutMs);

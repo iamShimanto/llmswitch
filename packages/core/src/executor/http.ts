@@ -29,6 +29,8 @@ export interface ExecuteResult {
   cached?: boolean;
   /** live quota info parsed from upstream rate-limit headers */
   quota?: QuotaInfo | null;
+  /** DB provider-account that served the request (multi-account), if any. */
+  accountId?: string | null;
 }
 
 interface WireCall {

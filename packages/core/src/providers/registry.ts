@@ -74,7 +74,7 @@ export class ProviderRegistry {
   }
 
   /** All providers with credentials resolved from the environment. */
-  connected(env: NodeJS.ProcessEnv = process.env): ResolvedProvider[] {
+  connected(env: NodeJS.ProcessEnv = process.env, forceIds?: Set<string>): ResolvedProvider[] {
     const out: ResolvedProvider[] = [];
     for (const def of this.defs) {
       // A disabled catalog entry (unported transport, local-CLI-only, …)
@@ -87,7 +87,7 @@ export class ProviderRegistry {
         if (def.disabled) continue; // e.g. local-CLI-only transports
         const check = OAUTH_CREDS_CHECKS[def.id];
         const available = check ? check(env) : collectKeys(def.envKey, env).length > 0;
-        if (!available) continue;
+        if (!available && !(forceIds && forceIds.has(def.id))) continue;
         const { envKey: _ek, envBaseUrl: _eb, ...rest } = def;
         out.push({
           ...rest,
@@ -129,7 +129,7 @@ export class ProviderRegistry {
         });
         continue;
       }
-      if (keys.length === 0 && !def.noAuth) continue;
+      if (keys.length === 0 && !def.noAuth && !(forceIds && forceIds.has(def.id))) continue;
       const { envKey: _ek, envBaseUrl: _eb, ...rest } = def;
       out.push({
         ...rest,
@@ -137,7 +137,7 @@ export class ProviderRegistry {
         // keyless slots: noAuth providers without a configured key also get
         // the single "" pool slot so the router's rotation loop dispatches
         // them instead of throwing "no healthy account keys"
-        allKeys: keys.length > 0 ? keys : (def.noAuth ? [""] : []),
+        allKeys: keys.length > 0 ? keys : (def.noAuth || (forceIds && forceIds.has(def.id)) ? [""] : []),
         baseUrl: (def.envBaseUrl ? (env[def.envBaseUrl] ?? "").trim() : "") || def.baseUrl,
       });
     }

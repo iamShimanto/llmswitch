@@ -41,6 +41,7 @@ import Skills from "./pages/Skills";
 import ApiManager from "./pages/ApiManager";
 import Audit from "./pages/Audit";
 import Combos from "./pages/Combos";
+import Routing from "./pages/Routing";
 import Cache from "./pages/Cache";
 import Changelog from "./pages/Changelog";
 import Chaos from "./pages/Chaos";
@@ -118,6 +119,7 @@ const SECTIONS: Section[] = [
       { id: "webhooks", labelKey: "nav.webhooks" },
       { id: "audit", labelKey: "nav.audit" },
       { id: "combos", labelKey: "nav.combos" },
+      { id: "routing", labelKey: "nav.routing" },
       { id: "orchestration", labelKey: "nav.orchestration" },
       { id: "agents", labelKey: "nav.agents" },
     ],
@@ -372,6 +374,7 @@ function AppInner() {
         {tab === "webhooks" && <Webhooks />}
         {tab === "audit" && <Audit />}
         {tab === "combos" && <Combos />}
+        {tab === "routing" && <Routing />}
         {tab === "orchestration" && <Orchestration />}
         {tab === "agents" && <Agents />}
         {tab === "settings" && <Settings />}

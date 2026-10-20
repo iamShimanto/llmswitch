@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS usage_log (
   completion_tokens INTEGER NOT NULL DEFAULT 0,
   latency_ms INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'ok',
-  cost_usd REAL NOT NULL DEFAULT 0
+  cost_usd REAL NOT NULL DEFAULT 0,
+  account_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON usage_log(ts);
 CREATE TABLE IF NOT EXISTS request_logs (
@@ -54,10 +55,33 @@ CREATE TABLE IF NOT EXISTS request_logs (
   cost_usd REAL NOT NULL DEFAULT 0,
   cached INTEGER NOT NULL DEFAULT 0,
   request_preview TEXT NOT NULL DEFAULT '',
-  response_preview TEXT NOT NULL DEFAULT ''
+  response_preview TEXT NOT NULL DEFAULT '',
+  account_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_request_logs_ts ON request_logs(ts);
 CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON request_logs(provider);
+CREATE TABLE IF NOT EXISTS provider_accounts (
+  id TEXT PRIMARY KEY,
+  provider_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'api_key',
+  secret TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  calls INTEGER NOT NULL DEFAULT 0,
+  errors INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_accounts_provider ON provider_accounts(provider_id);
+CREATE TABLE IF NOT EXISTS routing_rules (
+  id TEXT PRIMARY KEY,
+  pattern TEXT NOT NULL,
+  providers TEXT NOT NULL DEFAULT '[]',
+  strategy TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts INTEGER NOT NULL,
@@ -107,6 +131,12 @@ export class Store {
       );
     if (!cols("usage_log").has("cost_usd")) {
       this.db.exec("ALTER TABLE usage_log ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0");
+    }
+    if (!cols("usage_log").has("account_id")) {
+      this.db.exec("ALTER TABLE usage_log ADD COLUMN account_id TEXT");
+    }
+    if (!cols("request_logs").has("account_id")) {
+      this.db.exec("ALTER TABLE request_logs ADD COLUMN account_id TEXT");
     }
     if (!cols("api_keys").has("budget_usd")) {
       this.db.exec("ALTER TABLE api_keys ADD COLUMN budget_usd REAL");
@@ -204,6 +234,7 @@ export class Store {
     completionTokens: number;
     costUsd: number;
     cached: boolean;
+    accountId?: string | null;
     request: Array<{ role: string; content: string }>;
     responsePreview: string;
   }): void {
@@ -211,8 +242,8 @@ export class Store {
       .prepare(
         `INSERT OR REPLACE INTO request_logs
            (id, ts, key_id, provider, model, strategy, status, latency_ms,
-            prompt_tokens, completion_tokens, cost_usd, cached, request_preview, response_preview)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            prompt_tokens, completion_tokens, cost_usd, cached, request_preview, response_preview, account_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         e.id,
@@ -229,6 +260,7 @@ export class Store {
         e.cached ? 1 : 0,
         JSON.stringify(e.request).slice(0, 4000),
         (e.responsePreview ?? "").slice(0, 1000),
+        e.accountId ?? null,
       );
     // amortized retention trim
     if (++this.requestLogWrites % 100 === 0) {
@@ -335,11 +367,12 @@ export class Store {
     latencyMs: number;
     status: string;
     costUsd?: number;
+    accountId?: string | null;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO usage_log (ts, key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status, cost_usd)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usage_log (ts, key_id, provider, model, prompt_tokens, completion_tokens, latency_ms, status, cost_usd, account_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         Date.now(),
@@ -351,6 +384,7 @@ export class Store {
         entry.latencyMs,
         entry.status,
         entry.costUsd ?? 0,
+        entry.accountId ?? null,
       );
   }
 
@@ -423,6 +457,141 @@ export class Store {
   }
 
   /** Daily request counts + spend for the last N days (oldest → newest). */
+  // ---- provider accounts (multi-account) ----
+
+  addAccount(input: {
+    providerId: string;
+    label: string;
+    kind: "api_key" | "session";
+    secret?: string | null;
+  }): ProviderAccount {
+    const id = `acct_${randomBytes(6).toString("hex")}`;
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO provider_accounts (id, provider_id, label, kind, secret, enabled, created_at)
+         VALUES (?, ?, ?, ?, ?, 1, ?)`,
+      )
+      .run(id, input.providerId, input.label, input.kind, input.secret ?? null, now);
+    return this.getAccount(id)!;
+  }
+
+  getAccount(id: string): ProviderAccount | null {
+    const r = this.db.prepare(`SELECT * FROM provider_accounts WHERE id = ?`).get(id) as
+      | Record<string, unknown>
+      | undefined;
+    return r ? mapAccount(r) : null;
+  }
+
+  listAccounts(providerId?: string): ProviderAccount[] {
+    const rows = (
+      providerId
+        ? this.db
+            .prepare(`SELECT * FROM provider_accounts WHERE provider_id = ? ORDER BY created_at ASC`)
+            .all(providerId)
+        : this.db.prepare(`SELECT * FROM provider_accounts ORDER BY provider_id, created_at ASC`).all()
+    ) as Array<Record<string, unknown>>;
+    return rows.map(mapAccount);
+  }
+
+  updateAccount(id: string, patch: { label?: string; enabled?: boolean }): boolean {
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (patch.label !== undefined) {
+      sets.push("label = ?");
+      vals.push(patch.label);
+    }
+    if (patch.enabled !== undefined) {
+      sets.push("enabled = ?");
+      vals.push(patch.enabled ? 1 : 0);
+    }
+    if (sets.length === 0) return false;
+    const res = this.db
+      .prepare(`UPDATE provider_accounts SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...(vals as never[]), id);
+    return res.changes > 0;
+  }
+
+  deleteAccount(id: string): boolean {
+    const res = this.db.prepare(`DELETE FROM provider_accounts WHERE id = ?`).run(id);
+    return res.changes > 0;
+  }
+
+  recordAccountUse(id: string, ok: boolean, error?: string): void {
+    this.db
+      .prepare(
+        `UPDATE provider_accounts
+         SET calls = calls + 1,
+             errors = errors + ${ok ? 0 : 1},
+             last_used_at = ?,
+             last_error = ?
+         WHERE id = ?`,
+      )
+      .run(Date.now(), ok ? null : (error ?? "").slice(0, 200) || null, id);
+  }
+
+  // ---- routing rules ----
+
+  listRoutingRules(): RoutingRule[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM routing_rules ORDER BY created_at ASC`)
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      pattern: String(r.pattern),
+      providers: JSON.parse(String(r.providers || "[]")) as string[],
+      strategy: String(r.strategy ?? ""),
+      enabled: Number(r.enabled) === 1,
+      createdAt: Number(r.created_at),
+    }));
+  }
+
+  addRoutingRule(input: { pattern: string; providers: string[]; strategy?: string }): RoutingRule {
+    const id = `rule_${randomBytes(6).toString("hex")}`;
+    const now = Date.now();
+    this.db
+      .prepare(
+        `INSERT INTO routing_rules (id, pattern, providers, strategy, enabled, created_at)
+         VALUES (?, ?, ?, ?, 1, ?)`,
+      )
+      .run(id, input.pattern, JSON.stringify(input.providers), input.strategy ?? "", now);
+    return this.listRoutingRules().find((r) => r.id === id)!;
+  }
+
+  updateRoutingRule(
+    id: string,
+    patch: { pattern?: string; providers?: string[]; strategy?: string; enabled?: boolean },
+  ): boolean {
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (patch.pattern !== undefined) {
+      sets.push("pattern = ?");
+      vals.push(patch.pattern);
+    }
+    if (patch.providers !== undefined) {
+      sets.push("providers = ?");
+      vals.push(JSON.stringify(patch.providers));
+    }
+    if (patch.strategy !== undefined) {
+      sets.push("strategy = ?");
+      vals.push(patch.strategy);
+    }
+    if (patch.enabled !== undefined) {
+      sets.push("enabled = ?");
+      vals.push(patch.enabled ? 1 : 0);
+    }
+    if (sets.length === 0) return false;
+    const res = this.db
+      .prepare(`UPDATE routing_rules SET ${sets.join(", ")} WHERE id = ?`)
+      .run(...(vals as never[]), id);
+    return res.changes > 0;
+  }
+
+  deleteRoutingRule(id: string): boolean {
+    const res = this.db.prepare(`DELETE FROM routing_rules WHERE id = ?`).run(id);
+    return res.changes > 0;
+  }
+
   /** Cheap live counters for the dashboard stream (today + all-time). */
   liveStats(): {
     today: { requests: number; errors: number; inputTokens: number; outputTokens: number; costUsd: number };
@@ -765,3 +934,46 @@ export function memoryStore(): Store {
 }
 
 export { dirname };
+
+export interface ProviderAccount {
+  id: string;
+  providerId: string;
+  label: string;
+  kind: "api_key" | "session";
+  /** The API key value for kind=api_key (never exposed via the API layer). */
+  secret: string | null;
+  enabled: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+  calls: number;
+  errors: number;
+  lastError: string | null;
+}
+
+export interface RoutingRule {
+  id: string;
+  /** Model match: exact name or prefix ending with "*" (e.g. "gpt-*"). */
+  pattern: string;
+  /** Ordered provider-id chain for matching models. */
+  providers: string[];
+  /** Routing strategy name, "" = inherit the global strategy. */
+  strategy: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
+function mapAccount(r: Record<string, unknown>): ProviderAccount {
+  return {
+    id: String(r.id),
+    providerId: String(r.provider_id),
+    label: String(r.label),
+    kind: r.kind === "session" ? "session" : "api_key",
+    secret: typeof r.secret === "string" ? r.secret : null,
+    enabled: Number(r.enabled) === 1,
+    createdAt: Number(r.created_at),
+    lastUsedAt: typeof r.last_used_at === "number" ? r.last_used_at : null,
+    calls: Number(r.calls ?? 0),
+    errors: Number(r.errors ?? 0),
+    lastError: typeof r.last_error === "string" ? r.last_error : null,
+  };
+}

@@ -9,6 +9,8 @@ export interface InspectEntry {
   id: string;
   ts: number;
   keyId: string | null;
+  /** DB provider-account that served the request (multi-account). */
+  accountId?: string | null;
   provider: string;
   model: string;
   strategy: string;

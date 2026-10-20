@@ -10,6 +10,7 @@ import {
 } from "@llmswitch/web-session";
 import type { AppConfig } from "../config.js";
 import type { Store } from "../store/db.js";
+import { completeAsAccount } from "./sessions.js";
 
 /**
  * Browser-based OAuth login for Antigravity (Google sign-in).
@@ -144,10 +145,23 @@ export function registerAntigravityOAuthRoutes(app: Express, deps: AntigravityOA
       return;
     }
     try {
-      const saved = await completeLogin(code, entry.redirectUri, fetchFn);
+      const accountLabel = typeof req.body?.accountLabel === "string" ? req.body.accountLabel.trim() : "";
+      let saved: SavedSession;
+      let accountId: string | null = null;
+      if (accountLabel && store) {
+        ({ result: saved, accountId } = await completeAsAccount(
+          store,
+          "antigravity",
+          ANTIGRAVITY_SESSION_NAME,
+          accountLabel,
+          () => completeLogin(code, entry.redirectUri, fetchFn),
+        ));
+      } else {
+        saved = await completeLogin(code, entry.redirectUri, fetchFn);
+      }
       store?.audit("oauth.antigravity.connected", saved.email ?? saved.provider ?? "antigravity", "paste flow");
       deps.onCredentialsChanged?.();
-      res.json({ connected: true, email: saved.email ?? null });
+      res.json({ connected: true, email: saved.email ?? null, ...(accountId ? { accountId } : {}) });
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown error";
       res.status(500).json({ error: { message: message.slice(0, 200), type: "oauth_error" } });

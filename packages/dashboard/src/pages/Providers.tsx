@@ -1,6 +1,157 @@
 import { useEffect, useState } from "react";
 import { useLang } from "../i18n";
-import { api, getAdminKey, getSession, type CatalogEntry, type OAuthStatus, type ProviderInfo } from "../api";
+import { api, getAdminKey, getSession, type CatalogEntry, type OAuthStatus, type ProviderAccount, type ProviderInfo } from "../api";
+
+
+const BROWSER_OAUTH_IDS = ["antigravity", "claude", "codex"];
+
+/**
+ * Multi-account manager for one provider: named accounts rotate with the
+ * provider's default connection (the fallback). Add forms mirror the
+ * provider's auth type; browser-OAuth providers add accounts through
+ * their connect card's account-name field instead.
+ */
+function AccountsSection({ p, onChanged }: { p: ProviderInfo; onChanged: () => void }) {
+  const [accounts, setAccounts] = useState<ProviderAccount[]>([]);
+  const [label, setLabel] = useState("");
+  const [secret, setSecret] = useState("");
+  const [extra, setExtra] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    api.accounts(p.id).then((r) => setAccounts(r.accounts)).catch(() => {});
+  };
+  useEffect(load, [p.id]);
+
+  const auth = p.authType ?? "api-key";
+  const canAddHere =
+    auth === "api-key" || auth === "cookie" || (auth === "oauth" && !BROWSER_OAUTH_IDS.includes(p.id) && p.id !== "muse-code");
+
+  const add = async () => {
+    setMsg("");
+    if (!label.trim()) {
+      setMsg("Give the account a name first.");
+      return;
+    }
+    if (!secret.trim()) {
+      setMsg("The credential field is empty.");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (auth === "api-key") {
+        await api.saveProviderKey(p.id, secret.trim(), label.trim());
+      } else if (auth === "cookie") {
+        await api.importSession(p.id, secret.trim(), undefined, p.id === "muse-spark-web" ? extra.trim() || undefined : undefined, label.trim());
+      } else {
+        await api.oauthTokenSave(p.id, secret.trim(), extra.trim() || undefined, label.trim());
+      }
+      setLabel("");
+      setSecret("");
+      setExtra("");
+      load();
+      onChanged();
+    } catch (e) {
+      setMsg(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggle = async (a: ProviderAccount) => {
+    await api.updateAccount(a.id, { enabled: !a.enabled }).catch(() => {});
+    load();
+    onChanged();
+  };
+  const remove = async (a: ProviderAccount) => {
+    await api.deleteAccount(a.id).catch(() => {});
+    load();
+    onChanged();
+  };
+
+  const card = "rounded-xl border border-zinc-800 bg-zinc-900 p-4";
+  const input = "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm";
+  return (
+    <div className={`${card} mb-4`}>
+      <h2 className="font-semibold">Accounts</h2>
+      <p className="mt-1 text-xs text-zinc-500">
+        Requests rotate across the enabled accounts below plus the default connection above
+        (the fallback). Selection strategy lives on the Routing page.
+      </p>
+      {accounts.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {accounts.map((a) => (
+            <div key={a.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-zinc-800 px-3 py-2">
+              <span className="text-sm font-medium">{a.label}</span>
+              <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
+                {a.kind === "api_key" ? "API key" : "Session"}
+              </span>
+              <span className="text-xs text-zinc-500">
+                {a.calls} calls · {a.errors} errors
+                {a.lastUsedAt ? ` · last ${new Date(a.lastUsedAt).toLocaleString()}` : ""}
+              </span>
+              {a.lastError && <span className="w-full text-xs text-red-400/80">{a.lastError}</span>}
+              <span className="ml-auto flex gap-2">
+                <button
+                  onClick={() => toggle(a)}
+                  className={`rounded-lg px-3 py-1 text-xs ${a.enabled ? "bg-emerald-900 text-emerald-300" : "bg-zinc-800 text-zinc-400"}`}
+                >
+                  {a.enabled ? "Enabled" : "Disabled"}
+                </button>
+                <button
+                  onClick={() => remove(a)}
+                  className="rounded-lg border border-zinc-700 px-3 py-1 text-xs text-red-300 hover:bg-zinc-800"
+                >
+                  Remove
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {canAddHere ? (
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Account name (e.g. Work, Personal)" className={input} />
+          {auth === "api-key" && (
+            <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="API key" type="password" className={input} />
+          )}
+          {auth === "cookie" && (
+            <>
+              <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Cookies (name=value; …)" className={input} />
+              {p.id === "muse-spark-web" && (
+                <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Access token (ecto1:…) — optional" className={input} />
+              )}
+            </>
+          )}
+          {auth === "oauth" && (
+            <>
+              <input value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="Access token" type="password" className={input} />
+              <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Refresh token (optional)" type="password" className={input} />
+            </>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={add}
+              disabled={busy}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50"
+            >
+              {busy ? "Adding…" : "Add account"}
+            </button>
+            {msg && <span className="text-xs text-red-400">{msg}</span>}
+          </div>
+        </div>
+      ) : (
+        auth !== "none" && (
+          <p className="mt-3 text-xs text-zinc-500">
+            Add another account from the connect card above — type a name in its
+            "Account name" field before signing in and it will be saved as a separate account.
+          </p>
+        )
+      )}
+    </div>
+  );
+}
 
 function ProviderDetail({
   p,
@@ -352,6 +503,8 @@ function ProviderDetail({
         </div>
       )}
 
+      <AccountsSection p={p} onChanged={onChanged} />
+
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-4">
         {[
           { label: "Calls", value: String(p.stats.calls) },
@@ -438,6 +591,7 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [phase, setPhase] = useState<"idle" | "waiting" | "failed">("idle");
   const [userCode, setUserCode] = useState("");
+  const [acctName, setAcctName] = useState("");
   const [verifyUrl, setVerifyUrl] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -456,7 +610,7 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
   const start = async () => {
     setMsg("");
     try {
-      const r = await api.museDeviceStart();
+      const r = await api.museDeviceStart(acctName.trim() || undefined);
       // Open the verification page synchronously from the click (mobile
       // browsers block popups opened after async gaps).
       window.open(r.verificationUrl, "_blank");
@@ -548,12 +702,20 @@ function DeviceConnectCard({ onChanged }: { onChanged: () => void }) {
             want to spend here — no API key needed. A code will be shown; you
             approve it on Meta's site.
           </p>
-          <button
-            onClick={start}
-            className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
-          >
-            Connect with device code
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={acctName}
+              onChange={(e) => setAcctName(e.target.value)}
+              placeholder="Account name (optional — separate account)"
+              className="min-w-52 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+            />
+            <button
+              onClick={start}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500"
+            >
+              Connect with device code
+            </button>
+          </div>
           {msg && <p className="mt-2 text-sm text-red-400">{msg}</p>}
         </div>
       )}
@@ -573,6 +735,7 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
 
   const [started, setStarted] = useState(false);
   const [pasteUrl, setPasteUrl] = useState("");
+  const [acctName, setAcctName] = useState("");
   const [completing, setCompleting] = useState(false);
 
   const connect = async () => {
@@ -599,8 +762,9 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
     setCompleting(true);
     setError("");
     try {
-      await api.oauthComplete(cfg.id, pasteUrl);
+      await api.oauthComplete(cfg.id, pasteUrl, acctName.trim() || undefined);
       setPasteUrl("");
+      setAcctName("");
       setStarted(false);
       const s = await api.oauthStatus(cfg.id);
       setStatus(s);
@@ -692,6 +856,14 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
             load — that is expected on a remote gateway. Copy the <b>full address-bar URL</b>{" "}
             from that tab and paste it here:
           </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              value={acctName}
+              onChange={(e) => setAcctName(e.target.value)}
+              placeholder="Account name (optional — saves as a separate account)"
+              className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
+            />
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
             <input
               value={pasteUrl}

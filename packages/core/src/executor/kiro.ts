@@ -38,9 +38,9 @@ export const KIRO_SOCIAL_REFRESH_URL = "https://prod.us-east-1.auth.desktop.kiro
  * Credential resolution (session file convention mirrors the pack)
  * ------------------------------------------------------------------ */
 
-function sessionPath(env: NodeJS.ProcessEnv): string {
+function sessionPath(env: NodeJS.ProcessEnv, accountId?: string | null): string {
   const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
-  return join(dir, "kiro.json");
+  return join(dir, accountId ? `kiro--${accountId}.json` : "kiro.json");
 }
 
 export interface KiroCreds {
@@ -70,9 +70,9 @@ interface StoredKiroSession {
   };
 }
 
-function readStoredSession(env: NodeJS.ProcessEnv): StoredKiroSession | null {
+function readStoredSession(env: NodeJS.ProcessEnv, accountId?: string | null): StoredKiroSession | null {
   try {
-    const p = sessionPath(env);
+    const p = sessionPath(env, accountId);
     if (!existsSync(p)) return null;
     return JSON.parse(readFileSync(p, "utf8")) as StoredKiroSession;
   } catch {
@@ -83,16 +83,17 @@ function readStoredSession(env: NodeJS.ProcessEnv): StoredKiroSession | null {
 export async function resolveKiroCreds(
   env: NodeJS.ProcessEnv = process.env,
   fetchFn: typeof fetch = fetch,
+  accountId?: string | null,
 ): Promise<KiroCreds> {
   const envAccess = (env.KIRO_ACCESS_TOKEN ?? "").trim();
-  if (envAccess) {
+  if (envAccess && !accountId) {
     return {
       accessToken: envAccess,
       refreshToken: (env.KIRO_REFRESH_TOKEN ?? "").trim() || undefined,
       profileArn: (env.KIRO_PROFILE_ARN ?? "").trim() || undefined,
     };
   }
-  const stored = readStoredSession(env);
+  const stored = readStoredSession(env, accountId);
   const meta = stored?.meta ?? {};
   const externalIdp = meta.authMethod === "external_idp";
   if (stored?.accessToken && stored.expiresAt && stored.expiresAt > Date.now() + 60_000) {
@@ -316,8 +317,9 @@ export async function executeKiroChat(
   fetchFn: typeof fetch = fetch,
   timeoutMs = 120_000,
   env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
 ): Promise<ExecuteResult> {
-  const creds = await resolveKiroCreds(env, fetchFn);
+  const creds = await resolveKiroCreds(env, fetchFn, accountId);
   const payload = buildKiroPayload(model, body, creds.profileArn);
   const headers = buildKiroHeaders(creds);
   const started = Date.now();
