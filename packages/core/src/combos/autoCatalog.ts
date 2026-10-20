@@ -153,10 +153,8 @@ export function buildAutoTargets(
   // was 0/6 live: every name-matched candidate sat behind one provider's
   // sign-in wall while the user's best models were never candidates.
   let scored = primary;
-  if (
-    primary.length < limit &&
-    (template.category === "coding" || template.category === "reasoning")
-  ) {
+  let backfillAdded = 0;
+  if (template.category === "coding" || template.category === "reasoning") {
     const have = new Set(primary.map((t) => t.model));
     const backfill: Array<{ model: string; weight: number }> = [];
     for (const p of providers) {
@@ -170,8 +168,14 @@ export function buildAutoTargets(
       }
     }
     backfill.sort((a, b) => b.weight - a.weight);
+    backfillAdded = backfill.length;
     scored = [...primary, ...backfill];
   }
+  // When backfill candidates exist, the list may run up to 3 past the
+  // usual limit: the specialists keep priority, and the general models
+  // are extra fallbacks for when every specialist is walled/dead
+  // (exactly the live failure: 6/6 name-matched candidates unusable).
+  const pickLimit = limit + Math.min(3, backfillAdded);
   // Provider diversity: cap any single provider at 3 of the slots. A
   // monoculture candidate list collapses when that one provider has a
   // bad day (observed live: Kilo's catalog filled all 6 slots of
@@ -181,16 +185,16 @@ export function buildAutoTargets(
   const counts = new Map<string, number>();
   const picked: typeof scored = [];
   for (const t of scored) {
-    if (picked.length >= limit) break;
+    if (picked.length >= pickLimit) break;
     const pid = providerOf(t.model);
     const n = counts.get(pid) ?? 0;
     if (n >= 3) continue;
     counts.set(pid, n + 1);
     picked.push(t);
   }
-  if (picked.length < limit) {
+  if (picked.length < pickLimit) {
     for (const t of scored) {
-      if (picked.length >= limit) break;
+      if (picked.length >= pickLimit) break;
       if (!picked.includes(t)) picked.push(t);
     }
   }
