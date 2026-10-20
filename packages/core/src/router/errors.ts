@@ -28,6 +28,47 @@ export function isRetryable(kind: ErrorKind): boolean {
   return kind === "rate_limited" || kind === "server_error" || kind === "timeout";
 }
 
+const REASON_PHRASES: Record<number, string> = {
+  400: "Bad Request",
+  401: "Unauthorized",
+  403: "Forbidden",
+  404: "Not Found",
+  408: "Request Timeout",
+  409: "Conflict",
+  413: "Payload Too Large",
+  422: "Unprocessable Entity",
+  429: "Too Many Requests",
+  500: "Internal Server Error",
+  502: "Bad Gateway",
+  503: "Service Unavailable",
+  504: "Gateway Timeout",
+};
+
+/**
+ * Turn a raw upstream error body into a short human message. Raw bodies are
+ * often full HTML error pages or nested JSON dumps — showing them verbatim
+ * made the dashboard unreadable (and leaked page markup into API errors).
+ * HTML → status line only; JSON → its error.message; text → collapsed.
+ */
+export function summarizeUpstreamBody(status: number, text: string, max = 180): string {
+  const head = `upstream ${status}${REASON_PHRASES[status] ? ` ${REASON_PHRASES[status]}` : ""}`;
+  const body = (text ?? "").trim();
+  if (!body) return head;
+  if (/^<!doctype html|^<html/i.test(body)) return head;
+  try {
+    const j = JSON.parse(body) as Record<string, unknown>;
+    const err = (j.error ?? j) as Record<string, unknown>;
+    const msg =
+      (typeof err.message === "string" && err.message) ||
+      (typeof (j as { message?: unknown }).message === "string" && (j as { message: string }).message) ||
+      "";
+    if (msg) return `${head}: ${msg.replace(/\s+/g, " ").slice(0, max)}`;
+    return head;
+  } catch {
+    return `${head}: ${body.replace(/\s+/g, " ").slice(0, max)}`;
+  }
+}
+
 export class UpstreamError extends Error {
   constructor(
     public kind: ErrorKind,

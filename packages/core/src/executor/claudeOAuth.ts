@@ -27,7 +27,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
-import { classifyStatus, UpstreamError } from "../router/errors.js";
+import { classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import { anthropicStreamEvent, fromAnthropicResponse, toAnthropicRequest } from "../translator/anthropic.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -218,7 +218,7 @@ export async function executeClaudeOAuth(
   if (!res.ok) {
     clearTimeout(timer);
     const text = await res.text().catch(() => "");
-    throw new UpstreamError(classifyStatus(res.status), res.status, `claude upstream ${res.status}: ${text.slice(0, 300)}`);
+    throw new UpstreamError(classifyStatus(res.status), res.status, summarizeUpstreamBody(res.status, text).replace(/^upstream/, "claude upstream"));
   }
 
   const latencyMs = Date.now() - started;

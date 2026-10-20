@@ -30,7 +30,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
-import { classifyStatus, UpstreamError } from "../router/errors.js";
+import { classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import { codexStreamEvent, fromCodexResponse, toCodexRequest } from "../translator/codex.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -215,7 +215,7 @@ export async function executeCodexOAuth(
   if (!res.ok || !res.body) {
     clearTimeout(timer);
     const text = await res.text().catch(() => "");
-    throw new UpstreamError(classifyStatus(res.status), res.status, `codex upstream ${res.status}: ${text.slice(0, 300)}`);
+    throw new UpstreamError(classifyStatus(res.status), res.status, summarizeUpstreamBody(res.status, text).replace(/^upstream/, "codex upstream"));
   }
 
   const latencyMs = Date.now() - started;

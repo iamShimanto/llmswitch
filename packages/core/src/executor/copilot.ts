@@ -29,7 +29,7 @@ import type {
   ResolvedProvider,
 } from "../providers/types.js";
 import type { ExecuteResult } from "./http.js";
-import { classifyError, classifyStatus, UpstreamError } from "../router/errors.js";
+import { classifyError, classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import { parseQuotaHeaders } from "../quota/telemetry.js";
 
 /* ------------------------------------------------------------------ *
@@ -409,7 +409,7 @@ export async function executeCopilotChat(
     throw new UpstreamError(
       classifyStatus(res.status),
       res.status,
-      `upstream ${res.status}: ${text.slice(0, 300)}`,
+      summarizeUpstreamBody(res.status, text),
     );
   }
   const latencyMs = Date.now() - started;
