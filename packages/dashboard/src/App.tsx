@@ -215,12 +215,25 @@ function tabFromHash(): string | null {
   const h = window.location.hash.replace(/^#\/?/, "");
   return h && collectTabIds().includes(h) ? h : null;
 }
+// Path deep links: llmswitch…/models (OmniRoute-style URLs) open the page
+// too — the SPA is served for every path, so map a bare path segment to
+// the matching tab and normalize the URL to the hash form.
+function tabFromPath(): string | null {
+  const p = window.location.pathname.replace(/^\/+|\/+$/g, "");
+  return p && collectTabIds().includes(p) ? p : null;
+}
 
 type TabId = string;
 
 function AppInner() {
   const { t } = useLang();
-  const [tab, setTabState] = useState<TabId>(() => tabFromHash() ?? "home");
+  const [tab, setTabState] = useState<TabId>(() => tabFromHash() ?? tabFromPath() ?? "home");
+  useEffect(() => {
+    // Normalize a path deep link (e.g. /models) to the canonical #/models.
+    if (!tabFromHash() && tabFromPath()) {
+      window.history.replaceState(null, "", `/#/${tabFromPath()}`);
+    }
+  }, []);
   const setTab = (id: TabId) => {
     setTabState(id);
     const target = `#/${id}`;
