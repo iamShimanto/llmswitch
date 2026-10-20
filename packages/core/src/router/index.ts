@@ -270,6 +270,11 @@ async function executeWithRotation(
     ).map((a) => a.id);
     const candidates: Array<string | null> = [...ordered, null];
     let lastErr: unknown = null;
+    // The trailing default candidate (acct === null) often has no session
+    // at all; its "no session" error must not mask a REAL account's
+    // verdict (e.g. a 429 quota exhaustion with a reset time). Keep the
+    // first real-account error and prefer it when the loop gives up.
+    let firstAcctErr: unknown = null;
     let dedicated = false;
     for (const acct of candidates) {
       try {
@@ -281,6 +286,7 @@ async function executeWithRotation(
       } catch (err) {
         dedicated = true;
         lastErr = err;
+        if (acct && firstAcctErr === null) firstAcctErr = err;
         const kind = classifyError(err);
         if (acct && (kind === "auth_error" || kind === "rate_limited")) {
           hooks?.record(acct, false, err instanceof Error ? err.message : String(err));
@@ -290,7 +296,7 @@ async function executeWithRotation(
         throw err;
       }
     }
-    if (dedicated) throw lastErr ?? new Error("all provider accounts failed");
+    if (dedicated) throw firstAcctErr ?? lastErr ?? new Error("all provider accounts failed");
   } else {
     const r = await runDedicated(provider, model, body, fetchFn, timeoutMs, null);
     if (r !== null) return { ...r, accountId: null };

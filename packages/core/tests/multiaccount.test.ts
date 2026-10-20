@@ -159,6 +159,49 @@ describe("router: session account rotation", () => {
       delete process.env.LLMSWITCH_SESSIONS_DIR;
     }
   });
+
+  it("a real account's 429 is not masked by the default candidate's missing session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llmswitch-acct-"));
+    process.env.LLMSWITCH_SESSIONS_DIR = dir;
+    try {
+      // The one DB account has a session; the default (no-account)
+      // candidate has none. The account's upstream verdict is a 429
+      // quota exhaustion — that, not "no session", must surface.
+      writeFileSync(
+        join(dir, "antigravity--acct_a.json"),
+        JSON.stringify({
+          accessToken: "tok-a",
+          expiresAt: Date.now() + 3600_000,
+          projectId: "p1",
+          email: "a@example.com",
+        }),
+      );
+      const p = prov("antigravity", {
+        accounts: [{ id: "acct_a", label: "A", kind: "session" }],
+      });
+      const router = createRouter([p], {
+        accounts: {
+          strategy: () => "priority",
+          stats: () => [],
+          record: () => {},
+        },
+      });
+      const fetchFn = (async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: 429,
+              message: "You have exhausted your capacity on this model. Your quota will reset after 4h0m0s.",
+              status: "RESOURCE_EXHAUSTED",
+            },
+          }),
+          { status: 429, headers: { "content-type": "application/json" } },
+        )) as unknown as typeof fetch;
+      await expect(router.route(body, { fetchFn })).rejects.toThrow(/exhausted your capacity/);
+    } finally {
+      delete process.env.LLMSWITCH_SESSIONS_DIR;
+    }
+  });
 });
 
 describe("routing rules", () => {
