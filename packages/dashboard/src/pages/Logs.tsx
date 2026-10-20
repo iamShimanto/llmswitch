@@ -264,8 +264,8 @@ function ProxyLog() {
       <p className="mb-4 text-sm text-zinc-500">
         Requests proxied through the gateway (from the inspector ring buffer — last 200).
       </p>
-      <div className="overflow-hidden rounded-xl border border-zinc-800">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto rounded-xl border border-zinc-800">
+        <table className="w-full min-w-[620px] text-sm">
           <thead className="bg-zinc-900 text-left text-zinc-400">
             <tr>
               <th className="p-3">{t("apimanager.time")}</th>

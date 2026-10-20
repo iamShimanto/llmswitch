@@ -663,6 +663,7 @@ export interface GatewayConfig {
   global_budget_usd: ConfigValue<number | null> & { spentMonthToDate: number };
   global_system_prompt: ConfigValue<string>;
   global_system_prompt_enabled: ConfigValue<boolean>;
+  usage_retention_days: ConfigValue<number>;
 }
 
 export interface EndpointEntry {
@@ -693,6 +694,7 @@ export interface ConfigPatch {
   global_budget_usd?: number | null;
   global_system_prompt?: string | null;
   global_system_prompt_enabled?: boolean;
+  usage_retention_days?: number;
 }
 
 export interface FanoutResult {
