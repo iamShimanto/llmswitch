@@ -2908,7 +2908,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       targets = def.targets ?? [];
     } else if (name.startsWith("auto/")) {
       const template = autoTemplate(name);
-      if (template) targets = buildAutoTargets(template, providers);
+      if (template) {
+        const health = new Map(
+          router.breakerSnapshot().map((b) => [b.key, { open: b.open, failures: b.failures }]),
+        );
+        targets = buildAutoTargets(template, providers, 6, health);
+      }
     }
     if (!targets) return null;
     const norm = (m: string) => {

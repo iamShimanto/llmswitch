@@ -512,7 +512,10 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
       if (body.model.startsWith("auto/")) {
         const template = autoTemplate(body.model);
         if (template) {
-          const targets = buildAutoTargets(template, providers);
+          const health = new Map(
+            breaker.snapshot().map((b) => [b.key, { open: b.open, failures: b.failures }]),
+          );
+          const targets = buildAutoTargets(template, providers, 6, health);
           if (targets.length > 0) {
             return runRouterCombo(
               {
