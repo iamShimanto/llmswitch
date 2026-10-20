@@ -163,6 +163,11 @@ export const api = {
   quotas: () => req<{ providers: QuotaProvider[] }>("/api/quotas"),
   usageDaily: (days = 30) => req<{ days: DailyUsageRow[] }>(`/api/usage/daily?days=${days}`),
   sessions: () => req<{ sessions: SessionMeta[] }>("/api/sessions"),
+  importSession: (provider: string, cookies: string, cookieDomain?: string) =>
+    req<{ ok: boolean; connected: boolean }>("/api/sessions/import", {
+      method: "POST",
+      body: JSON.stringify({ provider, cookies, cookieDomain }),
+    }),
   deleteSession: (name: string) =>
     req<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" }),
   batches: () => req<{ object: string; data: BatchJob[] }>("/api/batches"),

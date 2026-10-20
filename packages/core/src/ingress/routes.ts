@@ -851,6 +851,50 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       .filter((x) => x !== null);
     res.json({ sessions });
   });
+  // Dashboard cookie import for web-session (cookie) providers: the user
+  // pastes a Cookie header string from their own logged-in browser; stored
+  // as the standard session file the webchat executors read (0600).
+  app.post("/api/sessions/import", (req: Request, res: Response) => {
+    const def = deps.registry?.get(typeof req.body?.provider === "string" ? req.body.provider : "");
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    if ((def.authType ?? "") !== "cookie") {
+      res.status(400).json({ error: { message: `provider ${def.id} is not a cookie provider`, type: "bad_request" } });
+      return;
+    }
+    const cookies = typeof req.body?.cookies === "string" ? req.body.cookies.trim() : "";
+    if (!cookies) {
+      res.status(400).json({ error: { message: "cookies string is required", type: "bad_request" } });
+      return;
+    }
+    let domain = typeof req.body?.cookieDomain === "string" ? req.body.cookieDomain.trim() : "";
+    if (!domain && def.baseUrl) {
+      try {
+        domain = new URL(def.baseUrl).hostname;
+      } catch {
+        domain = "";
+      }
+    }
+    const dir = sessionsDir();
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${def.id}.json`);
+    writeFileSync(
+      file,
+      JSON.stringify({ kind: "cookies", provider: def.id, cookies, cookieDomain: domain, savedAt: Date.now() }, null, 2),
+      { mode: 0o600 },
+    );
+    try {
+      chmodSync(file, 0o600);
+    } catch {
+      /* best effort */
+    }
+    store.audit("session.cookie_imported", def.id, "dashboard import");
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
   app.delete("/api/sessions/:name", (req: Request, res: Response) => {
     const name = String(req.params.name).replace(/[^a-z0-9-_]/gi, "_");
     const p = join(sessionsDir(), `${name}.json`);
