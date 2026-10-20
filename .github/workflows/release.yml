@@ -5,10 +5,11 @@ on:
 
 jobs:
   publish:
+    name: publish
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write # npm trusted publishing
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,7 +18,16 @@ jobs:
           cache: npm
           registry-url: https://registry.npmjs.org
       - run: npm ci
-      - run: npm run build --workspaces
-      - run: npm publish --workspace @llmswitch/core --access public
-      - run: npm publish --workspace @llmswitch/dashboard --access public
-      - run: npm publish --workspace llmswitch --access public
+      - run: npm run build
+      - run: npm test
+      - name: Publish packages (in dependency order)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --workspace @llmswitch/web-session --access public --provenance || echo "web-session already published at this version"
+          npm publish --workspace @llmswitch/core --access public --provenance
+          npm publish --workspace llmswitch --access public --provenance
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

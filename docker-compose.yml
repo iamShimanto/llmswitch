@@ -1,7 +1,7 @@
 services:
   llmswitch:
     build: .
-    image: llmswitch/llmswitch:latest
+    image: ghcr.io/iamshimanto/llmswitch:latest
     container_name: llmswitch
     restart: unless-stopped
     ports:

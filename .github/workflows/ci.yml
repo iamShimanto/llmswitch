@@ -6,6 +6,7 @@ on:
 
 jobs:
   build:
+    name: build-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,12 +15,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc -p packages/core/tsconfig.json --noEmit
-      - run: npx vitest run --project core 2>/dev/null || npx vitest run
-        working-directory: packages/core
-      - run: npx tsc --noEmit
-        working-directory: packages/dashboard
       - run: npm run build
-        working-directory: packages/dashboard
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test --workspace @llmswitch/web-session
       - run: node scripts/smoke.mjs
       - run: node scripts/smoke-p1.mjs
