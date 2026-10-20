@@ -4,6 +4,7 @@ import { z } from "zod";
 import { chatToResponses, responsesToChat } from "./responses.js";
 import { fetchPageText, mapSiteLinks, webSearch } from "../search/index.js";
 import { RoutingEventLog } from "../router/events.js";
+import { antigravityAccountQuotas } from "../quota/antigravityQuota.js";
 import type { Alerter } from "../alerts/index.js";
 import { costUsd } from "../billing/prices.js";
 import type { PromptCache } from "../cache/index.js";
@@ -1263,26 +1264,41 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   });
 
   // ---- Quota + key status ----
-  function quotaCheck() {
-    return {
-      providers: providers.map((p) => {
+  async function quotaCheck() {
+    const entries = await Promise.all(
+      providers.map(async (p) => {
         const s = router.stats.get(p.id);
-        return {
+        const entry: Record<string, unknown> = {
           id: p.id,
           connected: true,
           calls: s?.calls ?? 0,
           errors: s?.errors ?? 0,
-          telemetry: (router as unknown as { quota?: Map<string, unknown> }).quota?.get(p.id) ?? null,
+          telemetry: router.quotaSnapshot().get(p.id) ?? null,
         };
+        // OmniRoute-style live quota: Antigravity reports per-account,
+        // per-model remaining quota through retrieveUserQuota.
+        if (p.id === "antigravity") {
+          try {
+            const accts = store
+              .listAccounts("antigravity")
+              .filter((a) => a.enabled)
+              .map((a) => ({ id: a.id, label: a.label }));
+            entry.accountQuotas = await antigravityAccountQuotas(process.env, accts);
+          } catch {
+            entry.accountQuotas = [];
+          }
+        }
+        return entry;
       }),
-    };
+    );
+    return { providers: entries };
   }
-  app.get("/v1/quotas/check", (_req: Request, res: Response) => {
-    res.json(quotaCheck());
+  app.get("/v1/quotas/check", async (_req: Request, res: Response) => {
+    res.json(await quotaCheck());
   });
   // management alias (dashboard uses this; admin-gated when ADMIN_KEY is set)
-  app.get("/api/quotas", (_req: Request, res: Response) => {
-    res.json(quotaCheck());
+  app.get("/api/quotas", async (_req: Request, res: Response) => {
+    res.json(await quotaCheck());
   });
   // daily aggregates for the Analytics page
   app.get("/api/logs", (req: Request, res: Response) => {

@@ -59,9 +59,48 @@ export default function Quotas() {
                     <span>resets {resetLabel(tel!.resetAt)}</span>
                   </div>
                 </>
-              ) : (
+              ) : p.accountQuotas && p.accountQuotas.length > 0 ? null : (
                 <p className="text-xs text-zinc-500">{t("common.noRateLimit")}</p>
               )}
+              {p.accountQuotas?.map((g) => (
+                <div key={g.accountId ?? "default"} className="mt-3 border-t border-zinc-800 pt-3">
+                  <p className="mb-2 text-xs font-medium text-zinc-300">{g.label}</p>
+                  <div className="grid gap-2.5">
+                    {g.buckets.map((b) => (
+                      <div key={b.model}>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="min-w-0 truncate font-mono text-[11px] text-zinc-300" title={b.model}>
+                            {b.model}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-zinc-400">
+                            {b.unlimited
+                              ? "Unlimited"
+                              : b.remainingPct != null
+                                ? `${b.remainingPct}% left`
+                                : "quota unknown"}
+                          </span>
+                        </div>
+                        {b.remainingPct != null && !b.unlimited && (
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+                            <div
+                              className={`h-full rounded-full ${b.remainingPct < 20 ? "bg-red-500" : b.remainingPct < 50 ? "bg-amber-500" : "bg-emerald-500"}`}
+                              style={{ width: `${b.remainingPct}%` }}
+                            />
+                          </div>
+                        )}
+                        {b.resetAt && (
+                          <p className="mt-0.5 text-right text-[10px] text-zinc-500">
+                            resets {new Date(b.resetAt).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                    {g.buckets.length === 0 && (
+                      <p className="text-[11px] text-zinc-500">No quota buckets reported.</p>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           );
         })}

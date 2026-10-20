@@ -24,7 +24,7 @@ import type {
 } from "../providers/types.js";
 import { CooldownTracker } from "../quota/limiter.js";
 import { PromptCache } from "../cache/index.js";
-import { QuotaTelemetry } from "../quota/telemetry.js";
+import { QuotaTelemetry, type QuotaInfo } from "../quota/telemetry.js";
 import { buildEmulationPrompt, nativeTools, parseEmulatedToolCall } from "../tools/emulation.js";
 import { SemanticCache } from "../cache/semantic.js";
 import { classifyError, isRetryable } from "./errors.js";
@@ -119,6 +119,8 @@ export interface Router {
   stats: Map<string, ProviderStats>;
   /** per-provider account key pools (multi-account rotation) */
   pools: Map<string, AccountPool>;
+  /** latest rate-limit telemetry per provider (from upstream headers) */
+  quotaSnapshot: () => Map<string, QuotaInfo>;
 }
 
 const COOLDOWN_MS = 30_000;
@@ -452,5 +454,5 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
     throw new Error(`all providers failed (tried: ${attempted.join(", ")}): ${msg}`);
   }
 
-  return { route, stats, pools };
+  return { route, stats, pools, quotaSnapshot: () => telemetry.snapshot() };
 }
