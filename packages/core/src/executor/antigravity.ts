@@ -357,25 +357,43 @@ async function* parseAntigravitySSE(
 ): AsyncGenerator<{ text: string; finishReason: string; usage: Record<string, number> }> {
   const decoder = new TextDecoder();
   let buf = "";
+  // Cloud Code events are CUMULATIVE snapshots (each carries the full text
+  // so far, often ending with an empty snapshot). Convert to true deltas so
+  // both the streaming path and the aggregating path reconstruct the text
+  // exactly once.
+  let prev = "";
+  const convert = (raw: { text: string; finishReason: string; usage: Record<string, number> }) => {
+    let delta = raw.text;
+    if (delta.startsWith(prev)) delta = delta.slice(prev.length);
+    prev = raw.text;
+    return { ...raw, text: delta };
+  };
+  function* drain(block: string) {
+    for (const line of block.split("\n")) {
+      const t = line.trim();
+      if (!t.startsWith("data:")) continue;
+      const payload = t.slice(5).trim();
+      if (payload === "[DONE]") return;
+      try {
+        yield convert(extractText(JSON.parse(payload)));
+      } catch {
+        /* ignore malformed SSE lines */
+      }
+    }
+  }
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
     const parts = buf.split("\n\n");
     buf = parts.pop() ?? "";
     for (const part of parts) {
-      for (const line of part.split("\n")) {
-        const t = line.trim();
-        if (!t.startsWith("data:")) continue;
-        const payload = t.slice(5).trim();
-        if (payload === "[DONE]") return;
-        try {
-          yield extractText(JSON.parse(payload));
-        } catch {
-          /* ignore malformed SSE lines */
-        }
-      }
+      yield* drain(part);
     }
+  }
+  // Flush a trailing event that arrived without a terminating blank line.
+  if (buf.trim()) {
+    yield* drain(buf);
   }
 }
 

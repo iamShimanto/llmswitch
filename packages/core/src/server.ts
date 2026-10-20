@@ -13,6 +13,7 @@ import { RateLimiter } from "./quota/limiter.js";
 import { createRouter, type Router } from "./router/index.js";
 import { RoutingEventLog } from "./router/events.js";
 import { Store } from "./store/db.js";
+import type { ProviderRegistry } from "./providers/registry.js";
 import type { ResolvedProvider } from "./providers/types.js";
 
 export interface ServerContext {
@@ -33,6 +34,7 @@ export function createServer(
   config: AppConfig,
   providers: ResolvedProvider[],
   store: Store,
+  registry?: ProviderRegistry,
 ): ServerContext {
   const app = express();
   app.use(express.json({ limit: "10mb" }));
@@ -91,7 +93,15 @@ export function createServer(
   const sessions = new DashboardSessions();
   app.use(createAuth(store, limiter, sessions));
   registerDashboardAuthRoutes(app, store, sessions);
-  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog });
+  // Re-resolve connected providers IN PLACE (same array reference the
+  // router and routes hold) so OAuth connects / cookie imports / key adds
+  // take effect immediately — no gateway restart needed.
+  const refreshProviders = () => {
+    if (!registry) return;
+    const fresh = registry.connected();
+    providers.splice(0, providers.length, ...fresh);
+  };
+  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders });
 
   if (hasDashboard) {
     app.use(express.static(dashboardDir));

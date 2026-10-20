@@ -221,3 +221,32 @@ describe("executeAntigravity", () => {
     expect(err.kind).toBe("bad_request");
   });
 });
+
+describe("antigravity SSE parsing (live-captured shape)", () => {
+  it("parses CRLF-separated cumulative snapshots into the full text once", async () => {
+    const { executeAntigravity } = await import("../src/executor/antigravity.js");
+    const ev = (text: string, finish = false) =>
+      `data: ${JSON.stringify({
+        response: {
+          candidates: [
+            {
+              content: { role: "model", parts: [{ text }] },
+              ...(finish ? { finishReason: "STOP" } : {}),
+            },
+          ],
+          usageMetadata: { promptTokenCount: 51, candidatesTokenCount: 9, totalTokenCount: 60 },
+        },
+      })}\r\n\r\n`;
+    const sse = ev("") + ev("ANTIGRAVITY WORKS") + ev("", true);
+    const mockFetch = async () =>
+      new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    const r = await executeAntigravity(
+      "claude-sonnet-4-6",
+      { model: "claude-sonnet-4-6", messages: [{ role: "user", content: "Say exactly: ANTIGRAVITY WORKS" }] },
+      { accessToken: "tok", projectId: "aicode-consumers", email: "a@b.c" },
+      { fetchFn: mockFetch as typeof fetch },
+    );
+    expect(r.response?.choices[0]?.message.content).toBe("ANTIGRAVITY WORKS");
+    expect(r.response?.usage.total_tokens).toBe(60);
+  });
+});

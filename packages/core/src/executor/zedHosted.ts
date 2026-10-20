@@ -283,7 +283,7 @@ export async function executeZedHostedChat(
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        buf += decoder.decode(value, { stream: true });
+        buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
         let idx: number;
         while ((idx = buf.indexOf("\n")) >= 0) {
           const line = buf.slice(0, idx).trim();

@@ -50,7 +50,7 @@ export async function start(): Promise<void> {
   const store = new Store(config.dataDir);
   ensureFirstRunKey(store);
 
-  const { app, router, store: serverStore } = createServer(config, providers, store);
+  const { app, router, store: serverStore } = createServer(config, providers, store, registry);
   const { port, host, server } = await listenWithFallback(app, config.port);
 
   // realtime websocket: GET /v1/ws (same gateway-key auth as /v1/*)
