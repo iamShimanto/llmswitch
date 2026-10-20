@@ -31,7 +31,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
-import { classifyStatus, UpstreamError } from "../router/errors.js";
+import { classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
 /* ------------------------------------------------------------------ *
@@ -371,7 +371,7 @@ export async function executeBedrockChat(
     if (res.status === 401 || res.status === 403) {
       throw new BedrockAuthError(`bedrock auth failed (HTTP ${res.status}): ${text.slice(0, 200)} — check AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY`);
     }
-    throw new UpstreamError(classifyStatus(res.status), res.status, `bedrock upstream ${res.status}: ${text.slice(0, 300)}`);
+    throw new UpstreamError(classifyStatus(res.status), res.status, summarizeUpstreamBody(res.status, text).replace(/^upstream/, "bedrock upstream"));
   }
 
   const json = (await res.json().catch(() => null)) as any;

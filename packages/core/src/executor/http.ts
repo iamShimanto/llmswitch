@@ -15,7 +15,7 @@ import {
   geminiUrl,
   toGeminiRequest,
 } from "../translator/gemini.js";
-import { classifyError, classifyStatus, UpstreamError } from "../router/errors.js";
+import { classifyError, classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import { parseQuotaHeaders, type QuotaInfo } from "../quota/telemetry.js";
 
 export interface ExecuteResult {
@@ -154,7 +154,7 @@ export async function executeProvider(
     throw new UpstreamError(
       classifyStatus(res.status),
       res.status,
-      `upstream ${res.status}: ${text.slice(0, 300)}`,
+      summarizeUpstreamBody(res.status, text),
     );
   }
 

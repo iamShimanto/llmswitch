@@ -142,13 +142,18 @@ function ProviderDetail({
   };
 
   const test = async () => {
+    // Use the dedicated provider-test endpoint (real router, pinned
+    // provider:model) — the playground fan-out has its own dispatcher that
+    // mishandles dedicated-executor providers (Antigravity, web-chat…),
+    // which made this button fail while the per-model Test worked.
     setTesting(true);
     setError("");
     setTestResult("");
     try {
-      const r = await api.playground([{ role: "user", content: "Reply with the single word: ok" }], [p.id]);
-      const res = r.results[0];
-      setTestResult(res.ok ? `✓ ${(res.text ?? "").slice(0, 200)} (${res.latencyMs} ms)` : `✗ ${res.error}`);
+      const r = await api.providerTest(p.id, p.defaultModel);
+      setTestResult(
+        r.ok ? `✓ ${(r.text ?? "").slice(0, 200)} (${r.latencyMs} ms)` : `✗ ${r.error ?? "failed"}`,
+      );
     } catch (e) {
       setError(String(e));
     } finally {
