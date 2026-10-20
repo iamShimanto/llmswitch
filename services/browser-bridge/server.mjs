@@ -90,8 +90,11 @@ const PAGE_PROBLEM = () => {
 };
 
 async function runTurn({ prompt, cookies, timeoutMs }) {
+  const t0 = Date.now();
+  const lap = (stage) => console.log(`[bridge] ${stage} +${Date.now() - t0}ms`);
   const budget = Math.min(Math.max(Number(timeoutMs) || 90_000, 10_000), 150_000);
   const browser = await getBrowser();
+  lap("browser-ready");
   const ctx = await browser.createBrowserContext();
   const page = await ctx.newPage();
   try {
@@ -102,6 +105,7 @@ async function runTurn({ prompt, cookies, timeoutMs }) {
       waitUntil: "domcontentloaded",
       timeout: 45_000,
     });
+    lap("page-loaded");
     const composer = await page.waitForSelector('textarea, [contenteditable="true"]', {
       timeout: 25_000,
     });
@@ -129,6 +133,7 @@ async function runTurn({ prompt, cookies, timeoutMs }) {
       sent = false;
     }
     if (!sent) await page.keyboard.press("Enter").catch(() => {});
+    lap("sent");
 
     // Poll until the assistant text is non-empty and stable.
     const deadline = Date.now() + budget;
@@ -148,6 +153,7 @@ async function runTurn({ prompt, cookies, timeoutMs }) {
       }
     }
     if (!last) throw new Error("no assistant response rendered before the timeout");
+    lap("answered");
     return last;
   } finally {
     await ctx.close().catch(() => {});
@@ -183,13 +189,16 @@ const server = createServer(async (req, res) => {
         return;
       }
       try {
-        // One automatic retry with a fresh browser context: transient
-        // navigation races and page hiccups are common enough that a
-        // single retry turns most of them into successes.
+        // One automatic retry with a fresh browser context, but only for
+        // FAST transient failures (navigation races, launch hiccups) —
+        // retrying a full no-response attempt would just double the wait.
         const text = await enqueue(async () => {
+          const started = Date.now();
           try {
             return await runTurn(body);
-          } catch {
+          } catch (err) {
+            if (Date.now() - started > 30_000) throw err;
+            console.log("[bridge] retrying after fast failure:", err.message);
             return await runTurn(body);
           }
         });
@@ -205,4 +214,9 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[browser-bridge] listening on :${PORT} (chrome: ${CHROME})`);
+  // Pre-warm: the first cold Chrome launch on a small host can take
+  // 10-30s (profile + font caches) — pay it at boot, not on a request.
+  getBrowser()
+    .then(() => console.log("[bridge] browser pre-warmed"))
+    .catch((err) => console.error("[bridge] pre-warm failed:", err.message));
 });
