@@ -2923,10 +2923,14 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     let resolvedBy: Record<string, unknown> | null = null;
     for (const t of targets) {
       const started = Date.now();
+      // Cookie/web-chat targets (DDG solver, the ChatGPT browser bridge)
+      // legitimately need longer than 30s; API targets stay fast-fail.
+      const targetProvider = providers.find((p) => norm(t.model).startsWith(`${p.id}:`));
+      const targetTimeout = targetProvider?.authType === "cookie" ? 90_000 : 30_000;
       try {
         const r = await router.route(
           { model: norm(t.model), messages: [{ role: "user", content: message }] },
-          { bypassCache: true, timeoutMs: 30_000, forceAccountId: t.accountId ?? undefined },
+          { bypassCache: true, timeoutMs: targetTimeout, forceAccountId: t.accountId ?? undefined },
         );
         const entry = {
           target: t.model,
