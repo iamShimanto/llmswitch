@@ -84,7 +84,7 @@ export function setDashboardPassword(store: Store, password: string): void {
   store.setSetting(SETTING_KEY, hashPassword(password));
 }
 
-/** Simple per-IP login throttle: max 10 attempts per minute. */
+/** Per-IP login throttle: max 10 attempts per minute. */
 const loginHits = new Map<string, { count: number; resetAt: number }>();
 function loginThrottled(ip: string): boolean {
   const now = Date.now();
@@ -97,21 +97,61 @@ function loginThrottled(ip: string): boolean {
   return rec.count > 10;
 }
 
+/**
+ * Failure lockout (security hardening): 5 consecutive failed logins from
+ * one IP lock it for 5 minutes; every further failure doubles the lock
+ * (cap 1 hour). A successful login clears the record. This is what makes
+ * an internet-facing default/weak password expensive to brute-force even
+ * inside the per-minute throttle.
+ */
+const loginFailures = new Map<string, { fails: number; lockedUntil: number }>();
+export function lockRemainingMs(ip: string, now = Date.now()): number {
+  const rec = loginFailures.get(ip);
+  return rec ? Math.max(0, rec.lockedUntil - now) : 0;
+}
+export function noteLoginFailure(ip: string, now = Date.now()): void {
+  const rec = loginFailures.get(ip) ?? { fails: 0, lockedUntil: 0 };
+  rec.fails++;
+  if (rec.fails >= 5) {
+    const over = rec.fails - 5;
+    rec.lockedUntil = now + Math.min(3600_000, 300_000 * Math.pow(2, over));
+  }
+  loginFailures.set(ip, rec);
+}
+export function noteLoginSuccess(ip: string): void {
+  loginFailures.delete(ip);
+}
+
 export function registerDashboardAuthRoutes(app: Express, store: Store, sessions: DashboardSessions): void {
   app.get("/api/auth/status", (_req: Request, res: Response) => {
     res.json({ required: true, isDefault: dashboardPasswordState(store).isDefault });
   });
 
   app.post("/api/auth/login", (req: Request, res: Response) => {
-    if (loginThrottled(req.ip ?? "unknown")) {
+    const ip = req.ip ?? "unknown";
+    const lockedMs = lockRemainingMs(ip);
+    if (lockedMs > 0) {
+      res.status(429).json({
+        error: {
+          message: `too many failed logins — this address is locked for ${Math.ceil(lockedMs / 1000)} more seconds`,
+          type: "rate_limited",
+        },
+      });
+      return;
+    }
+    if (loginThrottled(ip)) {
       res.status(429).json({ error: { message: "too many login attempts — try again in a minute", type: "rate_limited" } });
       return;
     }
     const password = typeof req.body?.password === "string" ? req.body.password : "";
     if (!checkDashboardPassword(store, password)) {
+      noteLoginFailure(ip);
+      const nowLocked = lockRemainingMs(ip);
+      store.audit("auth.login_failed", null, `ip=${ip}${nowLocked > 0 ? " (locked)" : ""}`);
       res.status(401).json({ error: { message: "wrong password", type: "auth_error" } });
       return;
     }
+    noteLoginSuccess(ip);
     const token = sessions.issue();
     store.audit("auth.login", null, "dashboard login");
     res.json({ token, isDefault: dashboardPasswordState(store).isDefault });
@@ -136,8 +176,8 @@ export function registerDashboardAuthRoutes(app: Express, store: Store, sessions
     // current dashboard password.
     const current = typeof req.body?.currentPassword === "string" ? req.body.currentPassword : "";
     const next = typeof req.body?.newPassword === "string" ? req.body.newPassword : "";
-    if (next.length < 6) {
-      res.status(400).json({ error: { message: "new password must be at least 6 characters", type: "bad_request" } });
+    if (next.length < 8) {
+      res.status(400).json({ error: { message: "new password must be at least 8 characters", type: "bad_request" } });
       return;
     }
     if (!checkDashboardPassword(store, current)) {

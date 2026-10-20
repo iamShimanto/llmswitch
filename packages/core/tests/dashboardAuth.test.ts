@@ -9,6 +9,9 @@ import {
   checkDashboardPassword,
   dashboardPasswordState,
   setDashboardPassword,
+  lockRemainingMs,
+  noteLoginFailure,
+  noteLoginSuccess,
 } from "../src/ingress/dashboardAuth.js";
 
 function freshStore(): Store {
@@ -47,5 +50,28 @@ describe("dashboard password auth", () => {
     const t2 = sessions.issue();
     sessions.revokeAll();
     expect(sessions.valid(t2)).toBe(false);
+  });
+});
+
+describe("login failure lockout", () => {
+  it("locks after 5 consecutive failures, escalates, and clears on success", () => {
+    const ip = "203.0.113.9";
+    const t0 = 5_000_000;
+    for (let i = 0; i < 4; i++) noteLoginFailure(ip, t0);
+    expect(lockRemainingMs(ip, t0)).toBe(0);
+    noteLoginFailure(ip, t0); // 5th → 5 min lock
+    expect(lockRemainingMs(ip, t0)).toBe(300_000);
+    expect(lockRemainingMs(ip, t0 + 299_000)).toBe(1000);
+    expect(lockRemainingMs(ip, t0 + 301_000)).toBe(0);
+    noteLoginFailure(ip, t0 + 301_000); // 6th → 10 min
+    expect(lockRemainingMs(ip, t0 + 301_000)).toBe(600_000);
+    noteLoginSuccess(ip);
+    expect(lockRemainingMs(ip, t0 + 301_000)).toBe(0);
+  });
+
+  it("tracks IPs independently", () => {
+    for (let i = 0; i < 6; i++) noteLoginFailure("198.51.100.2", 1000);
+    expect(lockRemainingMs("198.51.100.2", 1000)).toBeGreaterThan(0);
+    expect(lockRemainingMs("198.51.100.3", 1000)).toBe(0);
   });
 });

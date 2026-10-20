@@ -223,6 +223,83 @@ function tabFromPath(): string | null {
   return p && collectTabIds().includes(p) ? p : null;
 }
 
+
+/**
+ * Security prompt: while the dashboard still uses the DEFAULT password,
+ * the owner is asked to change it right after login (once per browser
+ * session if they postpone). The gateway is often internet-facing, and a
+ * known default password is the weakest link in the whole system.
+ */
+function DefaultPasswordPrompt() {
+  const [open, setOpen] = useState(false);
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (sessionStorage.getItem("llmswitch_pw_prompt") === "later") return;
+    authApi
+      .me()
+      .then((m) => {
+        if (m.isDefault) setOpen(true);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  if (!open) return null;
+
+  const later = () => {
+    sessionStorage.setItem("llmswitch_pw_prompt", "later");
+    setOpen(false);
+  };
+
+  const change = async () => {
+    if (next.length < 8) return setMsg("New password must be at least 8 characters.");
+    if (next !== confirm) return setMsg("New passwords do not match.");
+    setBusy(true);
+    setMsg("");
+    try {
+      const r = await authApi.changePassword(current, next);
+      if (r.token) setSession(r.token);
+      setOpen(false);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Could not change the password.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const field = "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-amber-800/60 bg-zinc-900 p-6 shadow-xl">
+        <h2 className="text-lg font-bold text-amber-300">⚠ Change the default password</h2>
+        <p className="mt-2 text-sm text-zinc-400">
+          This dashboard still uses the default password, and this gateway is reachable from
+          the internet. Anyone who knows the default can sign in. Set your own password now —
+          it takes 30 seconds.
+        </p>
+        <div className="mt-4 space-y-2">
+          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="Current password" className={field} autoComplete="current-password" />
+          <input type="password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="New password (min 8 characters)" className={field} autoComplete="new-password" />
+          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Repeat new password" className={field} autoComplete="new-password" />
+        </div>
+        {msg && <p className="mt-2 text-sm text-red-400">{msg}</p>}
+        <div className="mt-4 flex gap-2">
+          <button onClick={change} disabled={busy} className="flex-1 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-500 disabled:opacity-50">
+            {busy ? "Saving…" : "Change password"}
+          </button>
+          <button onClick={later} className="rounded-lg border border-zinc-700 px-4 py-2 text-sm hover:bg-zinc-800">
+            Later
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type TabId = string;
 
 function AppInner() {
@@ -335,6 +412,7 @@ function AppInner() {
 
   return (
     <div className="min-h-screen md:flex">
+      <DefaultPasswordPrompt />
       {/* mobile top bar */}
       <div className="sticky top-0 z-30 flex items-center justify-between border-b border-zinc-800 px-4 py-3 md:hidden">
         <div className="flex items-center gap-2 text-base font-bold">
