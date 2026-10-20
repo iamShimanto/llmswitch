@@ -1,5 +1,17 @@
 /** Typed client for the gateway's dashboard API. */
 
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  wireFormat: string;
+  authType: string;
+  envKey: string;
+  models: string[];
+  defaultModel: string;
+  connected: boolean;
+  disabled: boolean;
+}
+
 export interface ProviderInfo {
   id: string;
   name: string;
@@ -125,6 +137,14 @@ export const api = {
       body: JSON.stringify({ messages, providers }),
     }),
   discover: (id: string) => req<{ provider: string; models: string[] }>(`/api/providers/${id}/discover`),
+  catalog: () => req<CatalogEntry[]>("/api/catalog"),
+  saveProviderKey: (id: string, key: string) =>
+    req<{ ok: boolean; connected: boolean }>(`/api/providers/${id}/key`, {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }),
+  removeProviderKey: (id: string) =>
+    req<{ ok: boolean; connected: boolean }>(`/api/providers/${id}/key`, { method: "DELETE" }),
   testModel: (id: string, model: string) =>
     req<{ ok: boolean; model: string; latencyMs: number; text?: string; error?: string }>(
       `/api/providers/${id}/test`,

@@ -70,6 +70,8 @@ export interface RouteDeps {
   fetchFn?: typeof fetch;
   /** Re-resolve connected providers after credential changes (OAuth connect, key add…). */
   refreshProviders?: () => void;
+  /** Full provider registry (catalog pages). */
+  registry?: import("../providers/registry.js").ProviderRegistry;
 }
 
 export function registerRoutes(app: Express, deps: RouteDeps): void {
@@ -1265,6 +1267,67 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         };
       }),
     );
+  });
+
+  // Full provider catalog (Providers page directory): every known provider,
+  // connected or not — each gets a detail page with models + connect + test.
+  app.get("/api/catalog", (_req: Request, res: Response) => {
+    deps.refreshProviders?.();
+    if (!deps.registry) {
+      res.status(501).json({ error: { message: "catalog unavailable", type: "not_implemented" } });
+      return;
+    }
+    const connectedIds = new Set(providers.map((p) => p.id));
+    res.json(
+      deps.registry.all().map((d) => ({
+        id: d.id,
+        name: d.name,
+        wireFormat: d.wireFormat,
+        authType: d.authType ?? "api-key",
+        envKey: d.envKey,
+        models: d.models,
+        defaultModel: d.defaultModel,
+        connected: connectedIds.has(d.id),
+        disabled: Boolean(d.disabled),
+      })),
+    );
+  });
+
+  // Save a provider API key from the dashboard (stored in the local DB as a
+  // provider_key:<ENV> setting; connects immediately, no restart).
+  app.post("/api/providers/:id/key", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    if ((def.authType ?? "api-key") !== "api-key" || !def.envKey) {
+      res.status(400).json({
+        error: { message: `provider ${def.id} does not use an API key (auth: ${def.authType ?? "api-key"})`, type: "bad_request" },
+      });
+      return;
+    }
+    const key = typeof req.body?.key === "string" ? req.body.key.trim() : "";
+    if (!key) {
+      res.status(400).json({ error: { message: "key is required", type: "bad_request" } });
+      return;
+    }
+    store.setSetting(`provider_key:${def.envKey}`, key);
+    store.audit("provider.key_saved", def.id, `env ${def.envKey}`);
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
+  });
+
+  app.delete("/api/providers/:id/key", (req: Request, res: Response) => {
+    const def = deps.registry?.get(req.params.id);
+    if (!def) {
+      res.status(404).json({ error: { message: "unknown provider", type: "not_found" } });
+      return;
+    }
+    if (def.envKey) store.deleteSetting(`provider_key:${def.envKey}`);
+    store.audit("provider.key_removed", def.id, `env ${def.envKey ?? ""}`);
+    deps.refreshProviders?.();
+    res.json({ ok: true, connected: providers.some((p) => p.id === def.id) });
   });
 
   // Per-model live test (Providers page): pins provider:model, tiny prompt,

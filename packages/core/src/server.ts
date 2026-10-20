@@ -98,10 +98,17 @@ export function createServer(
   // take effect immediately — no gateway restart needed.
   const refreshProviders = () => {
     if (!registry) return;
-    const fresh = registry.connected();
+    // Dashboard-saved provider API keys live in the store as
+    // `provider_key:<ENV_NAME>` settings; merge them over process.env so
+    // keys added at runtime (or in earlier runs) connect without a restart.
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const [k, v] of Object.entries(store.listSettings("provider_key:"))) {
+      env[k.slice("provider_key:".length)] = v;
+    }
+    const fresh = registry.connected(env);
     providers.splice(0, providers.length, ...fresh);
   };
-  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders });
+  registerRoutes(app, { config, providers, store, router, cache, alerter, inspector, routingLog, refreshProviders, registry });
 
   if (hasDashboard) {
     app.use(express.static(dashboardDir));
