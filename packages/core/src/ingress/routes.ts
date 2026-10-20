@@ -823,7 +823,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
 
   // ---- Web-session management (metadata only — secrets never leave the server) ----
   function sessionsDir(): string {
-    return process.env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+    return process.env.LLMSWITCH_SESSIONS_DIR ?? (process.env.DATA_DIR ? join(process.env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   }
   app.get("/api/sessions", (_req: Request, res: Response) => {
     const dir = sessionsDir();

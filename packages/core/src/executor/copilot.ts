@@ -123,7 +123,7 @@ export interface CopilotCreds {
 }
 
 function sessionPath(env: NodeJS.ProcessEnv, id: string): string {
-  const dir = env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   return join(dir, id === "ghe-copilot" ? "ghe-copilot.json" : "github-copilot.json");
 }
 

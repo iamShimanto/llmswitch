@@ -56,7 +56,7 @@ export const ZED_PROVIDERS = {
 export type ZedWireProvider = (typeof ZED_PROVIDERS)[keyof typeof ZED_PROVIDERS];
 
 function sessionPath(env: NodeJS.ProcessEnv): string {
-  const dir = env.LLMSWITCH_SESSIONS_DIR ?? join(homedir(), ".llmswitch", "sessions");
+  const dir = env.LLMSWITCH_SESSIONS_DIR ?? (env.DATA_DIR ? join(env.DATA_DIR, "sessions") : join(homedir(), ".llmswitch", "sessions"));
   return join(dir, "zed-hosted.json");
 }
 
