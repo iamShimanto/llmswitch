@@ -6,7 +6,7 @@
   },
   "main": "./dist/src/index.js",
   "name": "@llmswitch/web-session",
-  "private": true,
+  "private": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run"
