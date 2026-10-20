@@ -189,7 +189,7 @@ export const api = {
     }),
   deleteSession: (name: string) =>
     req<{ deleted: boolean }>(`/api/sessions/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  batches: () => req<{ object: string; data: BatchJob[] }>("/api/batches"),
+  batches: () => req<{ object: string; data: BatchJob[]; supported?: boolean }>("/api/batches"),
   cancelBatch: (id: string) =>
     req<unknown>(`/api/batches/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   oauthAntigravityStart: () => req<{ url: string }>("/api/oauth/antigravity/start"),

@@ -6,12 +6,16 @@ import { Tabs, TabEmpty } from "../components/Tabs";
 function Jobs() {
   const { t } = useLang();
   const [jobs, setJobs] = useState<BatchJob[]>([]);
+  const [supported, setSupported] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
 
   const load = () => {
     api.batches()
-      .then((r) => setJobs(r.data ?? []))
+      .then((r) => {
+        setJobs(r.data ?? []);
+        setSupported(r.supported !== false);
+      })
       .catch((e) => setError(String(e)));
   };
   useEffect(load, []);
@@ -86,7 +90,9 @@ function Jobs() {
             {jobs.length === 0 && !error && (
               <tr>
                 <td colSpan={5} className="p-6 text-center text-zinc-500">
-                  No batch jobs — or no OpenAI-wire provider connected (needs provider key upstream).
+                  {supported
+                    ? "No batch jobs yet."
+                    : "No connected provider supports the Batches API yet — it is an OpenAI feature. Connect OpenAI to create and list batch jobs."}
                 </td>
               </tr>
             )}

@@ -1,6 +1,6 @@
 // Bangla strings — natural Bangladeshi Bangla translations.
 export const bn: Record<string, string> = {
-  "batches.lists_batches_via_the_first_connected_op": "প্রথম সংযুক্ত OpenAI-ওয়্যার প্রোভাইডারের মাধ্যমে ব্যাচ তালিকা করে।",
+  "batches.lists_batches_via_the_first_connected_op": "Lists batches via a connected provider that supports the Batches API. Create batches with POST /v1/batches.",
   "cache.semantic_cache": "সিমান্টিক ক্যাশ",
   "changelog.express_gateway_on_6000_openai_compatibl": ":6000-এ Express গেটওয়ে — OpenAI-সামঞ্জস্যপূর্ণ চ্যাট, কমপ্লিশন, রেসপন্স, মিডিয়া API",
   "chaos.endpoint_in_the_gateway_failure_latency": "গেটওয়েতে এন্ডপয়েন্ট — প্রোভাইডারদের জন্য ফেইলিওর/লেটেন্সি ইনজেকশন এখনো তৈরি হয়নি। এই পেজের সব নিয়ন্ত্রণ ইচ্ছাকৃতভাবে নিষ্ক্রিয়, নকল নয়।",

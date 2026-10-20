@@ -615,51 +615,89 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     upstreamPath: string,
     body?: { raw: Buffer; contentType: string } | { json: unknown },
   ): Promise<void> {
-    const p = mediaProviderOr503(res);
-    if (!p) return;
-    try {
-      const headers: Record<string, string> = { authorization: `Bearer ${p.apiKey}` };
-      let fetchBody: BodyInit | undefined;
-      if (body) {
-        if ("raw" in body) {
-          headers["content-type"] = body.contentType;
-          fetchBody = new Uint8Array(body.raw);
-        } else {
-          headers["content-type"] = "application/json";
-          fetchBody = JSON.stringify(body.json);
-        }
-      }
-      const upstream = await fetch(`${p.baseUrl}${upstreamPath}`, {
-        method,
-        headers,
-        body: fetchBody,
-        signal: AbortSignal.timeout(300_000),
-      });
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      const pct = upstream.headers.get("content-type") ?? "";
-      if (upstream.status >= 400 && !pct.includes("json")) {
-        // Normalise non-JSON upstream errors so API clients and the dashboard
-        // always receive a JSON error body (never an HTML page or empty body).
-        res.status(upstream.status).json({
-          error: {
-            message: `provider ${p.id} returned HTTP ${upstream.status} for ${upstreamPath}`,
-            type: "upstream_error",
-          },
-        });
-        return;
-      }
-      if (pct.includes("text/html")) {
-        res.status(502).json({
-          error: { message: `provider ${p.id} does not support this endpoint (returned an HTML page)`, type: "upstream_error" },
-        });
-        return;
-      }
-      res.status(upstream.status);
-      res.setHeader("content-type", pct || "application/json");
-      res.send(buf);
-    } catch (err) {
-      res.status(502).json({ error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" } });
+    // Files/Batches are OpenAI-style APIs most providers never implement.
+    // Try every media-capable candidate (likely supporters first) instead of
+    // pinning the first one — a chat-only host's 405 used to surface as a
+    // raw page error even when another provider could have served it.
+    const supportScore = (p: ResolvedProvider): number =>
+      p.baseUrl.includes("api.openai.com") || p.id === "openai" ? 2 : p.baseUrl.includes("azure") ? 1 : 0;
+    const candidates = providers
+      .filter(isMediaCapable)
+      .sort((a, b) => supportScore(b) - supportScore(a));
+    if (candidates.length === 0) {
+      res.status(503).json({ error: { message: "no suitable provider connected", type: "upstream_error" } });
+      return;
     }
+    const isListGet =
+      method === "GET" && (upstreamPath === "/batches" || upstreamPath === "/files");
+    for (const p of candidates) {
+      try {
+        const headers: Record<string, string> = { authorization: `Bearer ${p.apiKey}` };
+        let fetchBody: BodyInit | undefined;
+        if (body) {
+          if ("raw" in body) {
+            headers["content-type"] = body.contentType;
+            fetchBody = new Uint8Array(body.raw);
+          } else {
+            headers["content-type"] = "application/json";
+            fetchBody = JSON.stringify(body.json);
+          }
+        }
+        const upstream = await fetch(`${p.baseUrl}${upstreamPath}`, {
+          method,
+          headers,
+          body: fetchBody,
+          signal: AbortSignal.timeout(300_000),
+        });
+        const pct = upstream.headers.get("content-type") ?? "";
+        // 404/405/501 or an HTML page = this provider does not implement the
+        // endpoint at all — fall through to the next candidate.
+        if (
+          upstream.status === 404 ||
+          upstream.status === 405 ||
+          upstream.status === 501 ||
+          // Chat-only hosts answer 400 "invalid path" for non-chat APIs
+          // (e.g. LLM7) — that is also "not implemented here".
+          upstream.status === 400 ||
+          pct.includes("text/html") ||
+          // A keyless candidate answering 401/403 just gates everything
+          // behind auth (e.g. OVH) — it cannot serve this API either.
+          // (With a key present, 401 is a real answer and is returned.)
+          (!p.apiKey && (upstream.status === 401 || upstream.status === 403))
+        ) {
+          continue;
+        }
+        const buf = Buffer.from(await upstream.arrayBuffer());
+        if (upstream.status >= 400 && !pct.includes("json")) {
+          res.status(upstream.status).json({
+            error: {
+              message: `provider ${p.id} returned HTTP ${upstream.status} for ${upstreamPath}`,
+              type: "upstream_error",
+            },
+          });
+          return;
+        }
+        res.status(upstream.status);
+        res.setHeader("content-type", pct || "application/json");
+        res.send(buf);
+        return;
+      } catch {
+        continue; // network failure on this candidate — try the next
+      }
+    }
+    // No connected provider implements this API.
+    if (isListGet) {
+      res.json({ object: "list", data: [], supported: false });
+      return;
+    }
+    res.status(501).json({
+      error: {
+        message:
+          "No connected provider supports this API — Files/Batches are OpenAI-style features. " +
+          "Connect OpenAI (or another provider that implements them) to use it.",
+        type: "not_supported",
+      },
+    });
   }
 
   app.post(
