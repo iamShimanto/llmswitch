@@ -23,7 +23,11 @@ function useGatewayKey() {
   return { key, save };
 }
 
-async function postV1(path: string, gwKey: string, body: unknown): Promise<{ ok: boolean; text: string }> {
+async function postV1(
+  path: string,
+  gwKey: string,
+  body: unknown,
+): Promise<{ ok: boolean; text: string; full?: string }> {
   try {
     const res = await fetch(path, {
       method: "POST",
@@ -40,7 +44,10 @@ async function postV1(path: string, gwKey: string, body: unknown): Promise<{ ok:
         text: `${title ? `${title} — ` : ""}the request failed at the proxy: the provider took too long to respond, or the gateway was unreachable. Try again, or pick another model.`,
       };
     }
-    return { ok: res.ok, text: text.slice(0, 2000) };
+    // `text` is display-truncated; `full` keeps the whole body — an
+    // image response is hundreds of KB of base64 and the render step
+    // needs it intact to parse out the picture.
+    return { ok: res.ok, text: text.slice(0, 2000), full: text };
   } catch (e) {
     return { ok: false, text: String(e) };
   }
@@ -194,11 +201,20 @@ export default function Media() {
     if (tab === "image") {
       const r = await postV1("/v1/images/generations", key, { prompt, n: 1, size: "1024x1024", ...modelField });
       let img: string | undefined;
+      let text = r.text;
       try {
-        const j = JSON.parse(r.text);
-        img = j.data?.[0]?.url ?? (j.data?.[0]?.b64_json ? `data:image/png;base64,${j.data[0].b64_json}` : undefined);
+        const j = JSON.parse(r.full ?? r.text);
+        const b64: string | undefined = j.data?.[0]?.b64_json;
+        if (b64) {
+          const mime = b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("UklGR") ? "image/webp" : "image/png";
+          img = `data:${mime};base64,${b64}`;
+          text = `Image received (${mime}, ~${Math.max(1, Math.round((b64.length * 3) / 4 / 1024))} KB)`;
+        } else if (j.data?.[0]?.url) {
+          img = j.data[0].url;
+          text = `Image URL received: ${img}`;
+        }
       } catch { /* keep raw text */ }
-      setResult({ ok: r.ok, text: r.text, img });
+      setResult({ ok: r.ok, text, img });
     } else if (tab === "audio") {
       const r = await postV1("/v1/audio/speech", key, { input: prompt.slice(0, 200), voice: "alloy", ...modelField });
       setResult({ ok: r.ok, text: r.ok ? t("media.audioReceived", { n: r.text.length }) : r.text });

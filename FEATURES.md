@@ -590,3 +590,11 @@ model "duck-image" on duckduckgo-web, /v1/images branch, and chat
 with duckduckgo-web:duck-image returns a markdown data URL. 3 new
 tests (496 core total). Note: Duck.ai's daily limit is IP-based —
 all gateway traffic shares the VPS IP's pool.
+
+## Media page image rendering fix (2026-10-21)
+Successful generations showed raw JSON instead of the picture:
+postV1 display-truncated the body at 2000 chars, so the render
+step's JSON.parse of a several-hundred-KB base64 payload always
+failed. postV1 now also returns the full body; the Image tab
+parses that, sniffs the mime from the base64 prefix, and shows a
+short "Image received" caption under the rendered image.
