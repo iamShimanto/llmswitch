@@ -598,3 +598,17 @@ step's JSON.parse of a several-hundred-KB base64 payload always
 failed. postV1 now also returns the full body; the Image tab
 parses that, sniffs the mime from the base64 prefix, and shows a
 short "Image received" caption under the rendered image.
+
+## Image editing via Antigravity (2026-10-21)
+POST /v1/images/edits now has a real branch: when the multipart
+model pins antigravity, a small built-in multipart reader extracts
+the image + prompt, and executeAntigravityImageEdit sends the
+picture as a Gemini inlineData part next to the instruction
+(buildAntigravityEnvelope gained extraUserParts); the edited
+picture comes back in the usual images-API shape. The Media page
+Image tab gained an edit mode (file picker + prompt → Edit Image).
+Duck.ai editing could NOT be wired: its upload pipeline sits
+behind a moderation-token + encrypted-stream protocol (every
+plain-payload variant returns ERR_BAD_REQUEST) — the edits route
+says so honestly when duckduckgo-web is pinned. Generation via
+Duck works (see the Duck.ai section above).
