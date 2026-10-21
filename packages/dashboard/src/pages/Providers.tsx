@@ -644,6 +644,13 @@ function ProviderDetail({
                   The site opens through this gateway — just log in there and your session
                   connects automatically. Then come back and press Test. (Some sites block
                   proxied logins; then use the paste box below.)
+                  {p.id === "gemini-web" && (
+                    <span className="mt-1 block font-medium text-amber-300">
+                      Google blocks sign-in through proxied windows — this window cannot
+                      complete a Google login. Connect Gemini Web with the LLMSwitch
+                      Connect extension in Kiwi Browser instead.
+                    </span>
+                  )}
                 </p>
               </div>
               <p className="mb-3 text-sm text-zinc-400">

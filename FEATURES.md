@@ -660,3 +660,9 @@ now forwards only content-type/cache validators/auth headers
 (location still rewritten separately). The VPS nginx site also
 gained proxy_buffer_size 128k / proxy_buffers 8 128k as a second
 layer.
+
+## Gemini Web: honest login guidance (2026-10-21)
+The Gemini detail page now warns on the login-window button that
+Google blocks proxied sign-ins (verified live: the proxied SPA
+loads but its API calls fail, and Sign-in 404s through the proxy)
+and points to the Kiwi + Connect extension flow instead.
