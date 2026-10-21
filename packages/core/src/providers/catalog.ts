@@ -679,7 +679,7 @@ export const CATALOG_PROVIDERS: ProviderDef[] = [
     envKey: "DUCKDUCKGO_WEB_API_KEY",
     envBaseUrl: "DUCKDUCKGO_WEB_BASE_URL",
     authType: "none",
-    models: ["gpt-5.4-mini", "gpt-5.6-luna", "claude-haiku-4-5", "mistral-small-2603", "tinfoil/gpt-oss-120b", "tinfoil/gemma4-31b"],
+    models: ["gpt-5.4-mini", "gpt-5.6-luna", "claude-haiku-4-5", "mistral-small-2603", "tinfoil/gpt-oss-120b", "tinfoil/gemma4-31b", "duck-image"],
     defaultModel: "gpt-5.4-mini",
     costTier: 1,
   },

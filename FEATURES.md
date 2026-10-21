@@ -576,3 +576,17 @@ was exhausted by gateway testing; the dashboard showed a 502
   instead of a raw abort / proxy 524 page.
 - Media page: HTML error pages (Cloudflare 502/524) are rendered as
   a one-line friendly message with the page title, never raw HTML.
+
+## Duck.ai image generation (2026-10-21)
+Duck.ai grew a "New Image" feature (OpenAI-powered, free, daily
+limit) — the gateway now exposes it. Wire format (spiked live): the
+ordinary anonymous chat flow with canDelegateImageGeneration: true
++ canUseTools: true; the orchestrator model (gpt-6-luna) invokes
+its GenerateImage tool and the SSE stream carries the picture as
+base64 in generate-image ui-component events (partial preview, then
+status "success"). New core executor executeDuckDuckGoImage (session
+setup factored into openDdgSession, shared with chat), catalog
+model "duck-image" on duckduckgo-web, /v1/images branch, and chat
+with duckduckgo-web:duck-image returns a markdown data URL. 3 new
+tests (496 core total). Note: Duck.ai's daily limit is IP-based —
+all gateway traffic shares the VPS IP's pool.

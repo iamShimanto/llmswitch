@@ -3,7 +3,7 @@ import { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { registry } from "../src/providers/registry.js";
 import { executeProvider } from "../src/executor/http.js";
-import { executeDuckDuckGoChat } from "../src/executor/duckduckgo.js";
+import { executeDuckDuckGoChat, executeDuckDuckGoImage, DDG_IMAGE_MODEL } from "../src/executor/duckduckgo.js";
 import { createRouter } from "../src/router/index.js";
 import { memoryStore } from "../src/store/db.js";
 import { createServer as createApp } from "../src/server.js";
@@ -206,6 +206,77 @@ describe("duckduckgo-web executor", () => {
     const payload = JSON.parse(payloadBody) as { messages: Array<{ role: string; content: string }> };
     expect(payload.messages.some((m) => m.role === "system")).toBe(false);
     expect(payload.messages[0]!.content).toContain("Be brief.");
+  });
+
+  it("generates an image via the GenerateImage delegation events", async () => {
+    let chatPayload: Record<string, unknown> | null = null;
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      if (url.endsWith("/duckchat/v1/status")) {
+        return new Response("ok", { status: 200, headers: { "x-vqd-4": "t" } });
+      }
+      if (url.endsWith("/duckchat/v1/chat")) {
+        chatPayload = JSON.parse(init.body as string) as Record<string, unknown>;
+        const ev = (data: unknown) => `data: ${typeof data === "string" ? data : JSON.stringify(data)}\n\n`;
+        const body =
+          ev("[CHAT_TITLE:Red panda]") +
+          ev("[PING]") +
+          ev({ name: "generate-image", role: "ui-component", state: "data", data: { type: "image-partial", status: "partial", b64Image: "/9j/PARTIAL" } }) +
+          ev({ name: "generate-image", role: "ui-component", state: "data", data: { status: "success", b64Image: "/9j/FINALIMAGE" } }) +
+          ev("[DONE]");
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    const img = await executeDuckDuckGoImage(ddgProvider(), "a red panda", fetchFn, 30_000, async (h) => `solved:${h}`);
+    expect(img.b64).toBe("/9j/FINALIMAGE");
+    expect(img.mime).toBe("image/jpeg");
+    expect(chatPayload!.canDelegateImageGeneration).toBe(true);
+    expect(chatPayload!.canUseTools).toBe(true);
+  });
+
+  it("image generation fails honestly when the model only talks", async () => {
+    const fetchFn = (async (url: string) => {
+      if (url.endsWith("/duckchat/v1/status")) {
+        return new Response("ok", { status: 200, headers: { "x-vqd-4": "t" } });
+      }
+      if (url.endsWith("/duckchat/v1/chat")) {
+        return new Response(`data: ${JSON.stringify({ message: "Daily image limit reached" })}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    await expect(executeDuckDuckGoImage(ddgProvider(), "a cat", fetchFn, 30_000, async (h) => h)).rejects.toThrow(
+      /did not generate an image.*Daily image limit/,
+    );
+  });
+
+  it("chat with the duck-image model returns a markdown data URL", async () => {
+    const fetchFn = (async (url: string) => {
+      if (url.endsWith("/duckchat/v1/status")) {
+        return new Response("ok", { status: 200, headers: { "x-vqd-4": "t" } });
+      }
+      if (url.endsWith("/duckchat/v1/chat")) {
+        const ev = { name: "generate-image", data: { status: "success", b64Image: "iVBORw0KGgo=" } };
+        return new Response(`data: ${JSON.stringify(ev)}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response("", { status: 200 });
+    }) as typeof fetch;
+    const res = await executeDuckDuckGoChat(
+      ddgProvider(),
+      DDG_IMAGE_MODEL,
+      { model: DDG_IMAGE_MODEL, messages: [{ role: "user" as const, content: "draw a cat" }] },
+      fetchFn,
+      30_000,
+      async (h) => h,
+    );
+    expect(res.response!.choices[0]!.message.content).toBe(
+      "![generated image](data:image/png;base64,iVBORw0KGgo=)",
+    );
   });
 
   it("surfaces anti-bot errors honestly (418 ERR_CHALLENGE)", async () => {

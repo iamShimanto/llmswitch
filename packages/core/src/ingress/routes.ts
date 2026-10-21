@@ -28,6 +28,7 @@ import { SkillRegistry } from "../skills/index.js";
 import { runCombo, validateCombo, validateAnyCombo, type Combo } from "../combos/index.js";
 import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
 import { WEBCHAT_PROVIDER_IDS, WEBCHAT_IMAGE_PROVIDER_IDS, executeWebChatImage } from "../executor/webchat.js";
+import { executeDuckDuckGoImage } from "../executor/duckduckgo.js";
 import { UpstreamError } from "../router/errors.js";
 import type { AppConfig } from "../config.js";
 import type { ResolvedProvider } from "../providers/types.js";
@@ -655,6 +656,24 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
             created: Math.floor(Date.now() / 1000),
             data: [{ b64_json: img.b64 }],
           });
+        } catch (err) {
+          const status = err instanceof UpstreamError ? err.status || 502 : 502;
+          res.status(status).json({
+            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+          });
+        }
+        return;
+      }
+    }
+    // Duck.ai image generation: the anonymous chat flow delegates to
+    // its GenerateImage tool when asked (canDelegateImageGeneration) —
+    // the picture arrives base64 in the SSE stream.
+    if (pinnedId === "duckduckgo-web") {
+      const p = providers.find((x) => x.id === "duckduckgo-web");
+      if (p) {
+        try {
+          const img = await executeDuckDuckGoImage(p, String(req.body.prompt));
+          res.status(200).json({ created: Math.floor(Date.now() / 1000), data: [{ b64_json: img.b64 }] });
         } catch (err) {
           const status = err instanceof UpstreamError ? err.status || 502 : 502;
           res.status(status).json({
