@@ -188,9 +188,21 @@ export function buildAntigravityEnvelope(
   body: ChatCompletionRequest,
   projectId: string,
   accountKey?: string | null,
+  extraUserParts?: Array<Record<string, unknown>>,
 ): Record<string, unknown> {
   const upstreamModel = resolveAntigravityModelId(model);
   const geminiBody = toGeminiRequest(body) as Record<string, unknown>;
+  // Extra parts (e.g. an inlineData image for edits) ride on the last
+  // user turn — Gemini image models edit what they can see.
+  if (extraUserParts?.length) {
+    const contents = geminiBody.contents as
+      | Array<{ role: string; parts: Array<Record<string, unknown>> }>
+      | undefined;
+    if (contents?.length) {
+      const lastUser = [...contents].reverse().find((c) => c.role === "user");
+      if (lastUser) lastUser.parts.push(...extraUserParts);
+    }
+  }
   // The upstream expects a system instruction; use OmniRoute's default when
   // the caller provided none.
   if (!("systemInstruction" in geminiBody)) {
@@ -332,6 +344,8 @@ export interface AntigravityExecuteOpts {
   maxAttempts?: number; // total attempts including the first (default 3)
   maxRetryDelayMs?: number; // cap for Retry-After waits (default 60s)
   sleep?: (ms: number) => Promise<void>;
+  /** Extra Gemini parts appended to the last user turn (image edits). */
+  extraUserParts?: Array<Record<string, unknown>>;
 }
 
 export interface AgyImage {
@@ -454,7 +468,7 @@ export async function executeAntigravity(
       "antigravity: no Cloud Code project id configured — run: llmswitch login antigravity",
     );
   }
-  const envelope = buildAntigravityEnvelope(model, body, projectId, creds.email);
+  const envelope = buildAntigravityEnvelope(model, body, projectId, creds.email, opts.extraUserParts);
   const headers = scrubFingerprintHeaders(buildAntigravityContentHeaders(creds.accessToken));
   const started = Date.now();
 
@@ -564,4 +578,43 @@ export async function executeAntigravityChat(
 ): Promise<ExecuteResult> {
   const creds = await resolveAntigravityCreds(env, fetchFn, sessionName, accountId);
   return executeAntigravity(model, body, creds, { fetchFn, timeoutMs, env });
+}
+
+/**
+ * Edit an image with a Gemini image model: the source picture rides
+ * as an inlineData part next to the edit instruction, and the model
+ * returns the edited picture the same way (surfaced by the chat
+ * executor as a markdown data URL).
+ */
+export async function executeAntigravityImageEdit(
+  model: string,
+  prompt: string,
+  image: { b64: string; mime: string },
+  fetchFn: typeof fetch = fetch,
+  timeoutMs = 150_000,
+  env: NodeJS.ProcessEnv = process.env,
+  accountId?: string | null,
+): Promise<{ b64: string; mime: string }> {
+  const creds = await resolveAntigravityCreds(env, fetchFn, "antigravity", accountId);
+  const result = await executeAntigravity(
+    model,
+    { model, messages: [{ role: "user", content: prompt }] },
+    creds,
+    {
+      fetchFn,
+      timeoutMs,
+      env,
+      extraUserParts: [{ inlineData: { mimeType: image.mime, data: image.b64 } }],
+    },
+  );
+  const content = result.response?.choices[0]?.message.content ?? "";
+  const m = content.match(/data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)/);
+  if (!m) {
+    throw new UpstreamError(
+      "server_error",
+      502,
+      `antigravity did not return an edited image${content ? ` — it replied: ${content.slice(0, 240)}` : ""}`,
+    );
+  }
+  return { mime: m[1]!, b64: m[2]! };
 }

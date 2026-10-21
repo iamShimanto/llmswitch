@@ -29,6 +29,7 @@ import { runCombo, validateCombo, validateAnyCombo, type Combo } from "../combos
 import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../translator/anthropic.js";
 import { WEBCHAT_PROVIDER_IDS, WEBCHAT_IMAGE_PROVIDER_IDS, executeWebChatImage } from "../executor/webchat.js";
 import { executeDuckDuckGoImage } from "../executor/duckduckgo.js";
+import { executeAntigravityImageEdit } from "../executor/antigravity.js";
 import { UpstreamError } from "../router/errors.js";
 import type { AppConfig } from "../config.js";
 import type { ResolvedProvider } from "../providers/types.js";
@@ -1816,10 +1817,99 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     async (req: Request, res: Response) => passthroughMultipart(req, res, "/audio/translations"),
   );
 
+  /** Minimal multipart/form-data reader for the edits endpoint. */
+  function parseMultipart(req: Request): {
+    fields: Record<string, string>;
+    files: Record<string, { filename: string; contentType: string; data: Buffer }>;
+  } | null {
+    const ct = req.headers["content-type"] ?? "";
+    const bm = /boundary=(?:"([^"]+)"|([^;]+))/.exec(ct);
+    if (!bm || !Buffer.isBuffer(req.body)) return null;
+    const boundary = Buffer.from(`--${bm[1] ?? bm[2]}`);
+    const buf: Buffer = req.body as Buffer;
+    const fields: Record<string, string> = {};
+    const files: Record<string, { filename: string; contentType: string; data: Buffer }> = {};
+    let pos: number = buf.indexOf(boundary);
+    while (pos !== -1) {
+      const partStart: number = pos + boundary.length;
+      if (buf[partStart] === 0x2d && buf[partStart + 1] === 0x2d) break; // closing --
+      const headerEnd: number = buf.indexOf("\r\n\r\n", partStart);
+      if (headerEnd === -1) break;
+      const headerText: string = buf.subarray(partStart, headerEnd).toString("latin1");
+      const dataStart: number = headerEnd + 4;
+      const next: number = buf.indexOf(boundary, dataStart);
+      if (next === -1) break;
+      const data: Buffer = buf.subarray(dataStart, Math.max(dataStart, next - 2)); // strip trailing CRLF
+      const name = /name="([^"]+)"/.exec(headerText)?.[1];
+      const filename = /filename="([^"]*)"/.exec(headerText)?.[1];
+      const contentType = /content-type:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim() ?? "";
+      if (name) {
+        if (filename !== undefined) {
+          files[name] = { filename, contentType, data: Buffer.from(data) };
+        } else {
+          fields[name] = data.toString("utf8");
+        }
+      }
+      pos = next;
+    }
+    return { fields, files };
+  }
+
   app.post(
     "/v1/images/edits",
     express.raw({ type: "*/*", limit: "25mb" }),
-    async (req: Request, res: Response) => passthroughMultipart(req, res, "/images/edits"),
+    async (req: Request, res: Response) => {
+      const mp = parseMultipart(req);
+      const modelField = mp?.fields.model ?? "";
+      const colon = modelField.indexOf(":");
+      const pin = colon > 0 ? modelField.slice(0, colon) : null;
+      if (mp && pin === "antigravity") {
+        const p = providers.find((x) => x.id === "antigravity");
+        const file = mp.files.image ?? Object.values(mp.files)[0];
+        const prompt = mp.fields.prompt ?? "";
+        if (!p) {
+          res.status(400).json({ error: { message: "antigravity is not connected", type: "invalid_request_error" } });
+          return;
+        }
+        if (!file || !prompt) {
+          res.status(400).json({
+            error: { message: "image edits need an 'image' file part and a 'prompt' field", type: "invalid_request_error" },
+          });
+          return;
+        }
+        const modelPart = modelField.slice(colon + 1) || "gemini-3.1-flash-image";
+        try {
+          const acct = store.listAccounts("antigravity").find((a) => a.enabled);
+          const img = await executeAntigravityImageEdit(
+            modelPart,
+            prompt,
+            { b64: file.data.toString("base64"), mime: file.contentType || "image/jpeg" },
+            fetch,
+            150_000,
+            process.env,
+            acct?.id,
+          );
+          res.status(200).json({ created: Math.floor(Date.now() / 1000), data: [{ b64_json: img.b64 }] });
+        } catch (err) {
+          const status = err instanceof UpstreamError ? err.status || 502 : 502;
+          res.status(status).json({
+            error: { message: err instanceof Error ? err.message : String(err), type: "upstream_error" },
+          });
+        }
+        return;
+      }
+      if (mp && pin === "duckduckgo-web") {
+        res.status(400).json({
+          error: {
+            message:
+              "duck.ai image editing is not available through its API flow (its upload pipeline is locked behind a moderation/encrypted protocol) — generation works; for edits pick antigravity:gemini-3.1-flash-image",
+            type: "invalid_request_error",
+          },
+        });
+        return;
+      }
+      return passthroughMultipart(req, res, "/images/edits");
+    },
   );
 
   // ---- Dashboard API (used by the SPA) ----

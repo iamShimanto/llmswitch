@@ -7,6 +7,7 @@ import {
   buildAntigravityIdeMetadata,
   deriveAntigravitySessionId,
   executeAntigravity,
+  executeAntigravityImageEdit,
   resolveAntigravityModelId,
   resolveAntigravityPlatformEnum,
   scrubFingerprintHeaders,
@@ -321,5 +322,45 @@ describe("antigravity image parts", () => {
     );
     const res = await executeAntigravity("gemini-3.1-flash-image", body, creds, { fetchFn, sleep: async () => {} });
     expect(res.response!.choices[0].message.content).toBe("![generated image](data:image/jpeg;base64,WFla)");
+  });
+});
+
+describe("antigravity image edits", () => {
+  it("appends extra user parts (the source image) to the envelope", () => {
+    const env = buildAntigravityEnvelope("gemini-3.1-flash-image", body, "proj-1", null, [
+      { inlineData: { mimeType: "image/jpeg", data: "U09VUkNF" } },
+    ]);
+    const req = env.request as { contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> };
+    const user = req.contents.find((c) => c.role === "user")!;
+    expect(user.parts).toContainEqual({ inlineData: { mimeType: "image/jpeg", data: "U09VUkNF" } });
+  });
+
+  it("sends the source image and returns the edited picture", async () => {
+    const payload = {
+      response: {
+        candidates: [
+          { content: { parts: [{ inlineData: { mimeType: "image/png", data: "RURJVEVE" } }] }, finishReason: "STOP" },
+        ],
+        usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 5, totalTokenCount: 8 },
+      },
+    };
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(new Response(sseEvent(payload), { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const img = await executeAntigravityImageEdit(
+      "gemini-3.1-flash-image",
+      "make the sky red",
+      { b64: "U09VUkNF", mime: "image/jpeg" },
+      fetchFn as unknown as typeof fetch,
+      30_000,
+      { ANTIGRAVITY_ACCESS_TOKEN: "tok123", ANTIGRAVITY_PROJECT_ID: "proj-1" },
+    );
+    expect(img).toEqual({ mime: "image/png", b64: "RURJVEVE" });
+    const sent = JSON.parse((fetchFn.mock.calls[0] as [string, RequestInit])[1].body as string) as {
+      request: { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    };
+    expect(sent.request.contents[0]!.parts).toContainEqual({
+      inlineData: { mimeType: "image/jpeg", data: "U09VUkNF" },
+    });
   });
 });

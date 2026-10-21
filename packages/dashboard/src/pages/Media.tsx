@@ -99,6 +99,53 @@ const KIND_HINT: Record<Kind, string> = {
   video: "Text prompt → generated video (provider support required).",
 };
 
+/** Multipart POST (image edits) — same result contract as postV1. */
+async function postForm(
+  path: string,
+  gwKey: string,
+  form: FormData,
+): Promise<{ ok: boolean; text: string; full?: string }> {
+  try {
+    const res = await fetch(path, { method: "POST", headers: { authorization: `Bearer ${gwKey}` }, body: form });
+    const text = await res.text();
+    if (text.trimStart().startsWith("<")) {
+      const title = /<title>([^<]+)<\/title>/i.exec(text)?.[1]?.trim();
+      return {
+        ok: false,
+        text: `${title ? `${title} — ` : ""}the request failed at the proxy: the provider took too long to respond, or the gateway was unreachable. Try again, or pick another model.`,
+      };
+    }
+    return { ok: res.ok, text: text.slice(0, 2000), full: text };
+  } catch (e) {
+    return { ok: false, text: String(e) };
+  }
+}
+
+/** Turn an images-API response into a renderable result (picture + caption). */
+function imageResultFrom(r: { ok: boolean; text: string; full?: string }): {
+  ok: boolean;
+  text: string;
+  img?: string;
+} {
+  let img: string | undefined;
+  let text = r.text;
+  try {
+    const j = JSON.parse(r.full ?? r.text);
+    const b64: string | undefined = j.data?.[0]?.b64_json;
+    if (b64) {
+      const mime = b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("UklGR") ? "image/webp" : "image/png";
+      img = `data:${mime};base64,${b64}`;
+      text = `Image received (${mime}, ~${Math.max(1, Math.round((b64.length * 3) / 4 / 1024))} KB)`;
+    } else if (j.data?.[0]?.url) {
+      img = j.data[0].url;
+      text = `Image URL received: ${img}`;
+    } else if (j.error?.message) {
+      text = String(j.error.message);
+    }
+  } catch { /* keep raw text */ }
+  return { ok: r.ok, text, img };
+}
+
 export default function Media() {
   const { t } = useLang();
   const { key, save } = useGatewayKey();
@@ -111,6 +158,8 @@ export default function Media() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState("");
+  const [editMode, setEditMode] = useState(false);
+  const [editFile, setEditFile] = useState<File | null>(null);
 
   const createKeyForMe = async () => {
     setKeyBusy(true);
@@ -199,22 +248,21 @@ export default function Media() {
     setResult(null);
     const modelField = model ? { model } : {};
     if (tab === "image") {
-      const r = await postV1("/v1/images/generations", key, { prompt, n: 1, size: "1024x1024", ...modelField });
-      let img: string | undefined;
-      let text = r.text;
-      try {
-        const j = JSON.parse(r.full ?? r.text);
-        const b64: string | undefined = j.data?.[0]?.b64_json;
-        if (b64) {
-          const mime = b64.startsWith("/9j/") ? "image/jpeg" : b64.startsWith("UklGR") ? "image/webp" : "image/png";
-          img = `data:${mime};base64,${b64}`;
-          text = `Image received (${mime}, ~${Math.max(1, Math.round((b64.length * 3) / 4 / 1024))} KB)`;
-        } else if (j.data?.[0]?.url) {
-          img = j.data[0].url;
-          text = `Image URL received: ${img}`;
+      if (editMode) {
+        if (!editFile) {
+          setResult({ ok: false, text: "Choose an image to edit first." });
+          setBusy(false);
+          return;
         }
-      } catch { /* keep raw text */ }
-      setResult({ ok: r.ok, text, img });
+        const form = new FormData();
+        form.set("image", editFile);
+        form.set("prompt", prompt);
+        if (model) form.set("model", model);
+        setResult(imageResultFrom(await postForm("/v1/images/edits", key, form)));
+      } else {
+        const r = await postV1("/v1/images/generations", key, { prompt, n: 1, size: "1024x1024", ...modelField });
+        setResult(imageResultFrom(r));
+      }
     } else if (tab === "audio") {
       const r = await postV1("/v1/audio/speech", key, { input: prompt.slice(0, 200), voice: "alloy", ...modelField });
       setResult({ ok: r.ok, text: r.ok ? t("media.audioReceived", { n: r.text.length }) : r.text });
@@ -304,13 +352,34 @@ export default function Media() {
             className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm"
           />
         </label>
+        {tab === "image" && (
+          <div className="mt-4 space-y-2">
+            <label className="flex items-center gap-2 text-sm text-zinc-300">
+              <input type="checkbox" checked={editMode} onChange={(e) => setEditMode(e.target.checked)} />
+              Edit an image instead — upload a photo and describe the change in the prompt
+            </label>
+            {editMode && (
+              <>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => setEditFile(e.target.files?.[0] ?? null)}
+                  className="block w-full text-sm text-zinc-300"
+                />
+                <p className="text-xs text-zinc-500">
+                  Editing works with the antigravity:gemini-3.1-flash-image model — pick it above.
+                </p>
+              </>
+            )}
+          </div>
+        )}
         <div className="mt-3">
           <button
             onClick={run}
             disabled={busy}
             className="rounded-lg bg-sky-600 px-4 py-1.5 text-sm font-medium capitalize hover:bg-sky-500 disabled:opacity-50"
           >
-            {busy ? t("common.working") : t("media.generateTab", { tab })}
+            {busy ? t("common.working") : tab === "image" && editMode ? "Edit Image" : t("media.generateTab", { tab })}
           </button>
         </div>
       </div>
