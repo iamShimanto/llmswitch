@@ -650,3 +650,13 @@ capturing pre-login cookies) trapped the user: "connected" with
 no way to open the login window or paste a fresh session. A
 connected provider now shows a Reconnect bar that reopens the
 connect section in place.
+
+## Proxy header allowlist (2026-10-21)
+The login-window proxy forwarded nearly all upstream headers;
+Google's >8KB header pile overflowed the nginx buffer in front of
+the gateway ("upstream sent too big header") and the proxied page
+502'd through the domain while working fine locally. The proxy
+now forwards only content-type/cache validators/auth headers
+(location still rewritten separately). The VPS nginx site also
+gained proxy_buffer_size 128k / proxy_buffers 8 128k as a second
+layer.

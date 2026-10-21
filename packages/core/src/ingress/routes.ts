@@ -1178,6 +1178,12 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         res.setHeader(k, loc);
         continue;
       }
+      // Forward only the handful of headers the window needs. Google
+      // (and other big sites) answer with >8KB of reporting/policy
+      // headers; forwarding the pile overflows the reverse proxy in
+      // front of the gateway (nginx "upstream sent too big header"
+      // -> 502) even though the page itself is fine.
+      if (!["content-type", "cache-control", "expires", "etag", "last-modified", "www-authenticate"].includes(lk)) continue;
       res.setHeader(k, v);
     }
     res.status(up.status);
