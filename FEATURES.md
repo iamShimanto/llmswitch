@@ -642,3 +642,11 @@ cookies (__Secure-1PSID/__Secure-1PSIDTS) live on .google.com, so
 a gemini.google.com-only read returns an anonymous session (the
 login-window proxy capture has the same blind spot — it only ever
 sees the gemini.google.com origin and saved just NID/COMPASS).
+
+## Provider detail: reconnect is always reachable (2026-10-21)
+The whole connect section rendered only when NOT connected, so a
+stale/anonymous auto-saved session (e.g. the login-window proxy
+capturing pre-login cookies) trapped the user: "connected" with
+no way to open the login window or paste a fresh session. A
+connected provider now shows a Reconnect bar that reopens the
+connect section in place.

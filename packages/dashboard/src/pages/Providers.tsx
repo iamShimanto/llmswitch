@@ -360,6 +360,7 @@ function ProviderDetail({
   const [customName, setCustomName] = useState("");
   const [paramBlock, setParamBlock] = useState(entry?.blockedParams ?? "");
   const [connCount, setConnCount] = useState(connected ? 1 : 0);
+  const [reconnect, setReconnect] = useState(false);
   useEffect(() => {
     setModels(entry?.models ?? p.models);
     setHiddenModels(new Set(entry?.hiddenModels ?? []));
@@ -526,9 +527,23 @@ function ProviderDetail({
         </div>
       )}
 
-      {!connected && (
+      {connected && !reconnect && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 p-4">
+          <p className="text-sm text-zinc-400">
+            Connected. If tests fail, the saved session may be stale or anonymous — reconnect to replace it.
+          </p>
+          <button
+            onClick={() => setReconnect(true)}
+            className="ml-3 shrink-0 rounded-lg border border-zinc-700 px-4 py-1.5 text-sm hover:bg-zinc-800"
+          >
+            Reconnect
+          </button>
+        </div>
+      )}
+
+      {(!connected || reconnect) && (
         <div className={`${card} mb-4 border-dashed`}>
-          <h2 className="mb-1 font-semibold">Not connected</h2>
+          <h2 className="mb-1 font-semibold">{connected ? "Reconnect / replace connection" : "Not connected"}</h2>
           {p.authType === "api-key" ? (
             <>
               <p className="mb-3 text-sm text-zinc-400">
