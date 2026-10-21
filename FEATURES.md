@@ -626,3 +626,11 @@ own __Secure-1PSID cookies. Model choice is account-side on the
 web. Core: catalog def + gemini-web added to
 WEBCHAT_IMAGE_PROVIDER_IDS so /v1/images routes to it once a
 session is imported.
+
+## Gemini proxy 502 fix (2026-10-21)
+The login-window proxy (and any gateway fetch) to gemini.google.com
+died with HeadersOverflowError: Google answers with >16KB of
+response headers, over Node fetch's default cap — the proxy
+surfaced it as a 502. docker-compose now starts the gateway with
+NODE_OPTIONS=--max-http-header-size=131072 (verified: /app goes
+from fetch-failed to 200).

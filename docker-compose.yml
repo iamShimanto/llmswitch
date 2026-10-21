@@ -14,6 +14,11 @@ services:
       PORT: 6000
       DATA_DIR: /app/data
       CHATGPT_BRIDGE_URL: http://browser-bridge:6100
+      # gemini.google.com answers with >16KB of headers (a wall of
+      # Google cookies) — Node's default header cap makes every fetch
+      # to it die with HeadersOverflowError (proxy 502s, driver
+      # bootstrap failures). 128KB gives Google's header pile room.
+      NODE_OPTIONS: --max-http-header-size=131072
     depends_on:
       - browser-bridge
 
