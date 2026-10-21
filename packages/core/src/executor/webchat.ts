@@ -163,7 +163,7 @@ export async function executeWebChatChat(
 }
 
 /** Providers whose web driver can generate images (ChatGPT web, via the browser bridge). */
-export const WEBCHAT_IMAGE_PROVIDER_IDS: ReadonlySet<string> = new Set(["chatgpt-web", "chatgpt-web-free"]);
+export const WEBCHAT_IMAGE_PROVIDER_IDS: ReadonlySet<string> = new Set(["chatgpt-web", "chatgpt-web-free", "gemini-web"]);
 
 /**
  * Image generation through a web-chat driver (currently ChatGPT web via

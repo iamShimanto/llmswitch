@@ -25,6 +25,7 @@ import { ManusDriver } from "./manus.js";
 import { VeniceWebDriver } from "./venice-web.js";
 import { YouComWebDriver } from "./you-com-web.js";
 import { MuseSparkWebDriver } from "./museSpark.js";
+import { GeminiWebDriver } from "./gemini-web.js";
 
 export const WEBCHAT_DRIVERS: Record<string, WebChatDriverCtor> = {
   "chatgpt-web": ChatGptWebDriver,
@@ -44,6 +45,7 @@ export const WEBCHAT_DRIVERS: Record<string, WebChatDriverCtor> = {
   "venice-web": VeniceWebDriver,
   "you-com-web": YouComWebDriver,
   "muse-spark-web": MuseSparkWebDriver,
+  "gemini-web": GeminiWebDriver,
 };
 
 export const WEBCHAT_DRIVER_IDS = Object.keys(WEBCHAT_DRIVERS);

@@ -612,3 +612,17 @@ behind a moderation-token + encrypted-stream protocol (every
 plain-payload variant returns ERR_BAD_REQUEST) — the edits route
 says so honestly when duckduckgo-web is pinned. Generation via
 Duck works (see the Duck.ai section above).
+
+## Gemini Web provider (2026-10-21)
+New cookie provider "gemini-web" (registry count 258 -> 259, cookie
+providers 17 -> 18): a web-session pack driver speaking the classic
+gemini.google.com StreamGenerate protocol directly over HTTP
+(SNlM0e/cfb2h lifted from /app; candidates parsed defensively).
+OmniRoute's own gemini-web drives the site with Playwright and
+retired its image model; this port instead implements chat plus a
+tentative generateImage (returns/downloads generated-image URLs
+when Google sends them) — NEEDS LIVE VERIFICATION with the user's
+own __Secure-1PSID cookies. Model choice is account-side on the
+web. Core: catalog def + gemini-web added to
+WEBCHAT_IMAGE_PROVIDER_IDS so /v1/images routes to it once a
+session is imported.
