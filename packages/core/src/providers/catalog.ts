@@ -3022,5 +3022,21 @@ export const CATALOG_PROVIDERS: ProviderDef[] = [
     defaultModel: "you-chat",
     costTier: 1,
   },
+  // Gemini Web (gemini.google.com cookies) — the classic StreamGenerate
+  // protocol driver in the web-session pack. Model choice is
+  // account-side on the web; image generation is wired tentatively
+  // (the driver returns generated-image URLs when Google sends them)
+  // and marked NEEDS LIVE VERIFICATION until a real session proves it.
+  {
+    id: "gemini-web",
+    name: "Gemini Web",
+    baseUrl: "https://gemini.google.com/app",
+    wireFormat: "openai",
+    authType: "cookie",
+    envKey: "GEMINI_WEB_COOKIES",
+    models: ["gemini-3.1-pro", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-image"],
+    defaultModel: "gemini-3.1-pro",
+    costTier: 1,
+  },
 ];
 
