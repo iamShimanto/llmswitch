@@ -634,3 +634,11 @@ response headers, over Node fetch's default cap — the proxy
 surfaced it as a 502. docker-compose now starts the gateway with
 NODE_OPTIONS=--max-http-header-size=131072 (verified: /app goes
 from fetch-failed to 200).
+
+## Connect extension: Gemini Web (2026-10-21)
+The connect extension's provider list gained gemini-web, and it
+now also reads parent-domain cookies for it: Gemini's login
+cookies (__Secure-1PSID/__Secure-1PSIDTS) live on .google.com, so
+a gemini.google.com-only read returns an anonymous session (the
+login-window proxy capture has the same blind spot — it only ever
+sees the gemini.google.com origin and saved just NID/COMPASS).

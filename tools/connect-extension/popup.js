@@ -19,7 +19,15 @@ const PROVIDERS = [
   ["venice-web", "Venice Web", "venice.ai"],
   ["you-com-web", "You.com Web", "you.com"],
   ["muse-spark-web", "Muse Spark (Meta AI)", "meta.ai"],
+  ["gemini-web", "Gemini Web", "gemini.google.com"],
 ];
+
+// Providers whose auth cookies live on a PARENT domain: Gemini's
+// __Secure-1PSID / __Secure-1PSIDTS are set on .google.com, so a
+// gemini.google.com-only query would miss the login entirely.
+const EXTRA_COOKIE_DOMAINS = {
+  "gemini-web": ["google.com"],
+};
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $("status");
@@ -66,15 +74,22 @@ async function connect() {
   btn.disabled = true;
   setStatus("Reading cookies for " + domain + "…");
   try {
-    const cookies = await chrome.cookies.getAll({ domain });
-    if (!cookies || cookies.length === 0) {
+    const domains = [domain, ...(EXTRA_COOKIE_DOMAINS[providerId] ?? [])];
+    const byName = new Map();
+    for (const d of domains) {
+      for (const c of (await chrome.cookies.getAll({ domain: d })) ?? []) {
+        if (!byName.has(c.name)) byName.set(c.name, c.value);
+      }
+    }
+    const cookies = [...byName.entries()];
+    if (cookies.length === 0) {
       setStatus(
         "No cookies found for " + domain + ". Open the site in this browser and log in first.",
         false,
       );
       return;
     }
-    const header = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+    const header = cookies.map(([n, v]) => `${n}=${v}`).join("; ");
     // Meta AI additionally needs the short-lived ecto1 access token embedded
     // in the meta.ai page HTML. Fetch it in THIS browser (logged in, no JS
     // challenge) and ship it with the session.
