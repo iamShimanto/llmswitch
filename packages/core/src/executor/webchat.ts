@@ -22,6 +22,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import { UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -119,7 +120,7 @@ export async function executeWebChatChat(
   );
   const messages = body.messages.map((m) => ({
     role: m.role === "tool" ? ("user" as const) : m.role,
-    content: m.content ?? "",
+    content: contentText(m.content),
   }));
   const started = Date.now();
   try {

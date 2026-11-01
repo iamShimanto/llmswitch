@@ -32,6 +32,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import { UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -256,7 +257,7 @@ export function extractFinalResponseMessage(eventData: unknown): string | null {
 function flattenMessages(messages: ChatCompletionRequest["messages"]): string {
   const parts: string[] = [];
   for (const m of messages) {
-    const text = typeof m.content === "string" ? m.content.trim() : "";
+    const text = contentText(m.content).trim();
     if (!text) continue;
     parts.push(m.role === "system" ? `System instructions: ${text}` : `${m.role}: ${text}`);
   }

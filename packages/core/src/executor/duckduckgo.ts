@@ -27,6 +27,7 @@ import type {
   ChatMessage,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import { UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 import { makeDuckDuckGoFeSignals, solveDuckDuckGoChallenge } from "./ddgChallenge.js";
@@ -57,11 +58,12 @@ function normalizeMessages(messages: ChatMessage[]): Array<{ role: string; conte
   let systemText = "";
   for (const m of messages) {
     if (m.role === "system") {
-      if (m.content) systemText += (systemText ? "\n" : "") + m.content;
+      const text = contentText(m.content);
+      if (text) systemText += (systemText ? "\n" : "") + text;
       continue;
     }
     if (m.role === "tool") continue; // no tool channel in the anonymous chat
-    out.push({ role: m.role, content: m.content ?? "" });
+    out.push({ role: m.role, content: contentText(m.content) });
   }
   if (systemText) {
     const firstUser = out.find((m) => m.role === "user");
@@ -354,7 +356,7 @@ export async function executeDuckDuckGoChat(
     // The image model rides the same session flow; the picture comes
     // back as a markdown data URL in the chat reply.
     if (model === DDG_IMAGE_MODEL) {
-      const prompt = [...body.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+      const prompt = contentText([...body.messages].reverse().find((m) => m.role === "user")?.content);
       const img = await executeDuckDuckGoImage(provider, prompt, fetchFn, timeoutMs, solve);
       const response: ChatCompletionResponse = {
         id: "chatcmpl-ddg",

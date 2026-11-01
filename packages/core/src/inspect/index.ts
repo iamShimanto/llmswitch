@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { ExecuteResult } from "../executor/http.js";
-import type { ChatCompletionRequest, ChatMessage } from "../providers/types.ts";
+import type { ChatCompletionRequest, ChatMessage } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import type { RouteOptions } from "../router/index.js";
 
 /** In-memory ring buffer of recent requests for the inspector (P1). */
@@ -35,7 +36,7 @@ export function truncateMessages(
   redact?: (text: string) => string,
 ): Array<{ role: string; content: string }> {
   return messages.slice(-6).map((m) => {
-    const content = (m.content ?? "").slice(0, MAX_CONTENT);
+    const content = contentText(m.content).slice(0, MAX_CONTENT);
     return { role: m.role, content: redact ? redact(content) : content };
   });
 }

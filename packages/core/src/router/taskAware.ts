@@ -1,11 +1,15 @@
-import type { ChatCompletionRequest, ResolvedProvider } from "../providers/types.js";
+import {
+  contentText,
+  type ChatCompletionRequest,
+  type ResolvedProvider,
+} from "../providers/types.js";
 import { orderProviders, type ProviderStats } from "./strategies.js";
 
 export type TaskKind = "code" | "reasoning" | "writing" | "chat";
 
 /** Heuristic task classifier (v1: keywords/patterns; ML classifier later). */
 export function classifyTask(body: ChatCompletionRequest): TaskKind {
-  const text = body.messages.map((m) => m.content ?? "").join("\n");
+  const text = body.messages.map((m) => contentText(m.content)).join("\n");
   if (
     /```|def \w+\(|function\s+\w+\s*\(|import\s+[\w.{}\s,]+|class\s+\w+|<\w+[^>]*>|=>|#include|console\.log|print\(/.test(
       text,

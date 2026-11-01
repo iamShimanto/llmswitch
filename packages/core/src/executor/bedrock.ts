@@ -31,6 +31,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import { classifyStatus, UpstreamError, summarizeUpstreamBody } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -214,7 +215,7 @@ export function toConverseBody(
   const system: Array<{ text: string }> = [];
   const messages: ConverseMessage[] = [];
   for (const msg of body.messages) {
-    const text = typeof msg.content === "string" ? msg.content : "";
+    const text = contentText(msg.content);
     if (msg.role === "system") {
       if (text.trim()) system.push({ text });
       continue;

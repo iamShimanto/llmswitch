@@ -30,9 +30,9 @@ import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../
 import { WEBCHAT_PROVIDER_IDS, WEBCHAT_IMAGE_PROVIDER_IDS, executeWebChatImage } from "../executor/webchat.js";
 import { executeDuckDuckGoImage } from "../executor/duckduckgo.js";
 import { executeAntigravityImageEdit } from "../executor/antigravity.js";
-import { UpstreamError } from "../router/errors.js";
+import { isVisionNotSupported, UpstreamError } from "../router/errors.js";
 import type { AppConfig } from "../config.js";
-import type { ResolvedProvider } from "../providers/types.js";
+import { contentText, type ResolvedProvider } from "../providers/types.js";
 import { createRouter, type Router } from "../router/index.js";
 import { isStrategyName, type StrategyName } from "../router/strategies.js";
 import type { Store } from "../store/db.js";
@@ -43,16 +43,41 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const ChatBody = z.object({
-  model: z.string().min(1),
-  messages: z
+/** OpenAI multimodal content parts (vision requests). */
+const ContentPart = z.union([
+  z.object({ type: z.literal("text"), text: z.string() }),
+  z.object({
+    type: z.literal("image_url"),
+    image_url: z.object({ url: z.string().min(1), detail: z.string().optional() }),
+  }),
+]);
+
+const ChatMessageBody = z.object({
+  role: z.enum(["system", "user", "assistant", "tool"]),
+  // Plain text OR an array of text/image parts (multimodal). Arrays used
+  // to die here with "expected string, received array" — the schema was
+  // the vision blocker; wire translators now convert parts natively.
+  content: z.union([z.string(), z.array(ContentPart), z.null()]),
+  // Tool linkage is part of the conversation, not noise to strip:
+  // translators map these to native function-call formats per wire.
+  tool_calls: z
     .array(
       z.object({
-        role: z.enum(["system", "user", "assistant", "tool"]),
-        content: z.string().nullable(),
+        id: z.string().optional(),
+        type: z.string().optional(),
+        function: z
+          .object({ name: z.string(), arguments: z.string().optional() })
+          .optional(),
       }),
     )
-    .min(1),
+    .optional(),
+  tool_call_id: z.string().optional(),
+  name: z.string().optional(),
+});
+
+const ChatBody = z.object({
+  model: z.string().min(1),
+  messages: z.array(ChatMessageBody).min(1),
   max_tokens: z.number().int().positive().optional(),
   temperature: z.number().min(0).max(2).optional(),
   stream: z.boolean().optional(),
@@ -198,11 +223,20 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
     if (isCompressionMode(compressHeader)) {
       body = {
         ...body,
-        messages: body.messages.map((m) =>
-          m.role === "user" && m.content
-            ? { ...m, content: compressText(m.content, compressHeader).text }
-            : m,
-        ),
+        messages: body.messages.map((m) => {
+          if (m.role !== "user" || !m.content) return m;
+          if (typeof m.content === "string") {
+            return { ...m, content: compressText(m.content, compressHeader).text };
+          }
+          // Multimodal: compress the text parts only — image parts are
+          // not text and pass through untouched.
+          return {
+            ...m,
+            content: m.content.map((p) =>
+              p.type === "text" ? { ...p, text: compressText(p.text, compressHeader).text } : p,
+            ),
+          };
+        }),
       };
     }
 
@@ -319,7 +353,8 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.json({ ...r, provider: result.providerId, cached: result.cached === true || undefined });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = /no providers connected/.test(message) ? 503 : 502;
+      const vision = isVisionNotSupported(err);
+      const status = vision ? 400 : /no providers connected/.test(message) ? 503 : 502;
       store.logUsage({
         keyId: req.apiKey?.id ?? null,
         provider: "-",
@@ -344,7 +379,9 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         responsePreview: (effPiiRedact() ? redactPii(message).text : message).slice(0, 500),
         fullBody: body,
       });
-      res.status(status).json({ error: { message, type: "upstream_error" } });
+      res
+        .status(status)
+        .json({ error: { message, type: vision ? "vision_not_supported" : "upstream_error" } });
     }
   });
 
@@ -411,12 +448,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       res.json(toAnthropicResponse(r, body.model));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const status = /no providers connected/.test(message) ? 503 : 502;
+      const vision = isVisionNotSupported(err);
+      const status = vision ? 400 : /no providers connected/.test(message) ? 503 : 502;
       store.logUsage({
         keyId: req.apiKey?.id ?? null, provider: "-", model: String(body.model),
         promptTokens: 0, completionTokens: 0, latencyMs: 0, status: "error",
       });
-      res.status(status).json({ type: "error", error: { type: "api_error", message } });
+      res
+        .status(status)
+        .json({ type: "error", error: { type: vision ? "invalid_request_error" : "api_error", message } });
     }
   });
 
@@ -2757,7 +2797,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
   const PlaygroundBody = z.object({
     messages: z.array(z.object({
       role: z.enum(["system", "user", "assistant"]),
-      content: z.string().nullable(),
+      content: z.union([z.string(), z.array(ContentPart), z.null()]),
     })).min(1),
     providers: z.array(z.string()).min(1),
     max_tokens: z.number().int().positive().optional(),
@@ -2793,7 +2833,7 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         promptTokens,
         completionTokens,
         costUsd: r.ok ? costUsd(r.providerId, r.model, promptTokens, completionTokens) : 0,
-        request: rest.messages.map((m) => ({ role: m.role, content: m.content ?? "" })),
+        request: rest.messages.map((m) => ({ role: m.role, content: contentText(m.content) })),
         responsePreview: r.ok ? (r.text ?? "").slice(0, 500) : (r.error ?? "").slice(0, 500),
       });
       store.logUsage({

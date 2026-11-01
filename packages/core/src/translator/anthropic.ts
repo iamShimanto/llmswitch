@@ -1,18 +1,36 @@
-import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers/types.js";
+import {
+  contentText,
+  parseDataUrl,
+  type ChatCompletionRequest,
+  type ChatCompletionResponse,
+  type ChatMessage,
+  type ImageContentPart,
+} from "../providers/types.js";
 
 /** Anthropic Messages API translator (→ wire format → OpenAI shape). */
 
 export function toAnthropicRequest(body: ChatCompletionRequest): Record<string, unknown> {
+  // Rich requests (image parts, tool calls, tool results) take the block
+  // path; plain-text requests keep the legacy string path byte-identical.
+  const rich = body.messages.some(
+    (m) => Array.isArray(m.content) || m.role === "tool" || (m.tool_calls?.length ?? 0) > 0,
+  );
+  return rich ? toAnthropicRequestRich(body) : toAnthropicRequestText(body);
+}
+
+/** Legacy plain-text conversion (unchanged behaviour for string content). */
+function toAnthropicRequestText(body: ChatCompletionRequest): Record<string, unknown> {
   const systemParts: string[] = [];
   const messages: Array<{ role: "user" | "assistant"; content: string }> = [];
 
   for (const m of body.messages) {
     if (m.role === "system") {
-      if (m.content) systemParts.push(m.content);
+      const text = contentText(m.content);
+      if (text) systemParts.push(text);
       continue;
     }
     if (m.role === "tool") continue; // P0: tools not supported
-    messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: m.content ?? "" });
+    messages.push({ role: m.role === "assistant" ? "assistant" : "user", content: contentText(m.content) });
   }
 
   // Anthropic requires alternating roles; merge consecutive same-role messages.
@@ -32,6 +50,109 @@ export function toAnthropicRequest(body: ChatCompletionRequest): Record<string, 
     ...(systemParts.length > 0 ? { system: systemParts.join("\n") } : {}),
     ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
     messages: merged,
+  };
+}
+
+type AnthropicBlock =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string };
+    }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string };
+
+function parseArgsObject(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw) as unknown;
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** OpenAI image part → Anthropic image block (data URLs as base64 source). */
+function imagePartToAnthropic(part: ImageContentPart): AnthropicBlock {
+  const url = part.image_url?.url ?? "";
+  const data = parseDataUrl(url);
+  if (data) {
+    return { type: "image", source: { type: "base64", media_type: data.mediaType, data: data.data } };
+  }
+  return { type: "image", source: { type: "url", url } };
+}
+
+/** Block-path conversion: image parts, tool_use and tool_result blocks. */
+function toAnthropicRequestRich(body: ChatCompletionRequest): Record<string, unknown> {
+  const systemParts: string[] = [];
+  const converted: Array<{ role: "user" | "assistant"; blocks: AnthropicBlock[] }> = [];
+  let callSeq = 0;
+
+  for (const m of body.messages) {
+    if (m.role === "system") {
+      const text = contentText(m.content);
+      if (text) systemParts.push(text);
+      continue;
+    }
+    if (m.role === "tool") {
+      const text = contentText(m.content);
+      if (m.tool_call_id) {
+        converted.push({
+          role: "user",
+          blocks: [{ type: "tool_result", tool_use_id: m.tool_call_id, content: text }],
+        });
+      } else if (text) {
+        // No call id to bind to — degrade to a plain user text turn.
+        converted.push({ role: "user", blocks: [{ type: "text", text }] });
+      }
+      continue;
+    }
+    const blocks: AnthropicBlock[] = [];
+    if (typeof m.content === "string") {
+      if (m.content) blocks.push({ type: "text", text: m.content });
+    } else if (Array.isArray(m.content)) {
+      for (const p of m.content) {
+        if (p?.type === "text") {
+          if (p.text) blocks.push({ type: "text", text: p.text });
+        } else if (p?.type === "image_url") {
+          blocks.push(imagePartToAnthropic(p));
+        }
+      }
+    }
+    if (m.role === "assistant") {
+      for (const tc of m.tool_calls ?? []) {
+        const name = tc.function?.name;
+        if (!name) continue;
+        blocks.push({
+          type: "tool_use",
+          id: tc.id ?? `toolu_call_${++callSeq}`,
+          name,
+          input: parseArgsObject(tc.function?.arguments),
+        });
+      }
+    }
+    if (blocks.length === 0) continue;
+    converted.push({ role: m.role === "assistant" ? "assistant" : "user", blocks });
+  }
+
+  // Anthropic requires alternating roles; merge consecutive same-role turns
+  // by concatenating their blocks.
+  const merged: Array<{ role: "user" | "assistant"; blocks: AnthropicBlock[] }> = [];
+  for (const c of converted) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === c.role) last.blocks.push(...c.blocks);
+    else merged.push({ role: c.role, blocks: [...c.blocks] });
+  }
+  if (merged.length > 0 && merged[0]!.role !== "user") {
+    merged.unshift({ role: "user", blocks: [{ type: "text", text: "(start)" }] });
+  }
+
+  return {
+    model: body.model,
+    max_tokens: body.max_tokens ?? 1024,
+    ...(systemParts.length > 0 ? { system: systemParts.join("\n") } : {}),
+    ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+    messages: merged.map((m) => ({ role: m.role, content: m.blocks })),
   };
 }
 
@@ -102,21 +223,71 @@ export function fromAnthropicRequest(body: any): ChatCompletionRequest {
       continue;
     }
     if (Array.isArray(m?.content)) {
-      const texts: string[] = [];
+      // One input message can yield several internal messages: tool_result
+      // blocks become their own role:"tool" messages (call id preserved);
+      // text/image blocks and tool_use calls accumulate into one message.
+      type Segment = { kind: "text"; text: string } | { kind: "image"; part: ImageContentPart };
+      let segments: Segment[] = [];
+      let toolCalls: NonNullable<ChatMessage["tool_calls"]> = [];
+      const flush = () => {
+        if (segments.length === 0 && toolCalls.length === 0) return;
+        const msg: ChatMessage = { role, content: "" };
+        if (segments.some((s) => s.kind === "image")) {
+          msg.content = segments.map((s) =>
+            s.kind === "image" ? s.part : { type: "text" as const, text: s.text },
+          );
+        } else {
+          msg.content = segments.map((s) => (s.kind === "text" ? s.text : "")).join("\n");
+        }
+        if (toolCalls.length > 0) msg.tool_calls = toolCalls;
+        messages.push(msg);
+        segments = [];
+        toolCalls = [];
+      };
       for (const b of m.content) {
-        if (b?.type === "text") texts.push(b.text ?? "");
-        else if (b?.type === "tool_result") {
+        if (b?.type === "text") {
+          segments.push({ kind: "text", text: b.text ?? "" });
+        } else if (b?.type === "tool_result") {
+          flush();
           messages.push({
             role: "tool",
-            content: typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? ""),
+            content:
+              typeof b.content === "string"
+                ? b.content
+                : Array.isArray(b.content)
+                  ? b.content
+                      .filter((x: any) => x?.type === "text")
+                      .map((x: any) => x.text ?? "")
+                      .join("\n")
+                  : JSON.stringify(b.content ?? ""),
+            ...(typeof b.tool_use_id === "string" ? { tool_call_id: b.tool_use_id } : {}),
           });
         } else if (b?.type === "tool_use") {
-          texts.push(`[tool call: ${b.name}(${JSON.stringify(b.input ?? {})})]`);
+          toolCalls.push({
+            id: typeof b.id === "string" ? b.id : undefined,
+            type: "function",
+            function: { name: String(b.name ?? ""), arguments: JSON.stringify(b.input ?? {}) },
+          });
         } else if (b?.type === "image") {
-          texts.push("[image omitted]");
+          const src = (b.source ?? {}) as Record<string, unknown>;
+          if (src.type === "base64" && typeof src.data === "string") {
+            segments.push({
+              kind: "image",
+              part: {
+                type: "image_url",
+                image_url: {
+                  url: `data:${typeof src.media_type === "string" ? src.media_type : "image/png"};base64,${src.data}`,
+                },
+              },
+            });
+          } else if (src.type === "url" && typeof src.url === "string") {
+            segments.push({ kind: "image", part: { type: "image_url", image_url: { url: src.url } } });
+          } else {
+            segments.push({ kind: "text", text: "[image omitted]" });
+          }
         }
       }
-      if (texts.length > 0) messages.push({ role, content: texts.join("\n") });
+      flush();
       continue;
     }
     messages.push({ role, content: "" });

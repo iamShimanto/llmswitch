@@ -1,4 +1,8 @@
-import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers/types.js";
+import {
+  contentText,
+  type ChatCompletionRequest,
+  type ChatCompletionResponse,
+} from "../providers/types.js";
 
 /**
  * Moonshot Kimi translator.
@@ -9,7 +13,7 @@ import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers
 export function toKimiRequest(body: ChatCompletionRequest): Record<string, unknown> {
   return {
     model: body.model,
-    messages: body.messages.map((m) => ({ role: m.role, content: m.content ?? "" })),
+    messages: body.messages.map((m) => ({ role: m.role, content: contentText(m.content) })),
     stream: true, // required by the Kimi route
     ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
     ...(body.max_tokens !== undefined ? { max_tokens: body.max_tokens } : {}),

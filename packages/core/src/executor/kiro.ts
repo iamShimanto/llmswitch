@@ -27,6 +27,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText, type ChatMessage } from "../providers/types.js";
 import { classifyStatus, UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -158,7 +159,7 @@ export function buildKiroPayload(
   const history: Array<Record<string, unknown>> = [];
   let currentContent = "";
 
-  const textOf = (m: { content: string | null }): string => m.content ?? "";
+  const textOf = (m: ChatMessage): string => contentText(m.content);
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m.role === "system") {

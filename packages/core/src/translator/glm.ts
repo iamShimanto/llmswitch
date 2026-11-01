@@ -1,4 +1,8 @@
-import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers/types.js";
+import {
+  contentText,
+  type ChatCompletionRequest,
+  type ChatCompletionResponse,
+} from "../providers/types.js";
 
 /**
  * Zhipu GLM (coding endpoint) translator.
@@ -15,7 +19,7 @@ export const GLM_REQUEST_DEFAULTS = {
 export function toGlmRequest(body: ChatCompletionRequest): Record<string, unknown> {
   return {
     model: body.model,
-    messages: body.messages.map((m) => ({ role: m.role, content: m.content ?? "" })),
+    messages: body.messages.map((m) => ({ role: m.role, content: contentText(m.content) })),
     stream: body.stream ?? false,
     temperature: body.temperature ?? GLM_REQUEST_DEFAULTS.temperature,
     top_p: GLM_REQUEST_DEFAULTS.top_p,

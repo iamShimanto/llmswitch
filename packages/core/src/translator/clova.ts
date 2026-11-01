@@ -1,4 +1,8 @@
-import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers/types.js";
+import {
+  contentText,
+  type ChatCompletionRequest,
+  type ChatCompletionResponse,
+} from "../providers/types.js";
 
 /**
  * Naver Clova Studio translator.
@@ -9,7 +13,7 @@ import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers
 export function toClovaRequest(body: ChatCompletionRequest): Record<string, unknown> {
   const messages = body.messages
     .filter((m) => m.role !== "tool")
-    .map((m) => ({ role: m.role === "system" ? "system" : m.role, content: m.content ?? "" }));
+    .map((m) => ({ role: m.role === "system" ? "system" : m.role, content: contentText(m.content) }));
   const extra = body as unknown as Record<string, unknown>;
   return {
     messages,

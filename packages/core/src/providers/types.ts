@@ -69,10 +69,64 @@ export interface ResolvedProvider extends Omit<ProviderDef, "envKey" | "envBaseU
   keyAccounts?: Map<string, string>;
 }
 
+/** OpenAI-style multimodal content parts (vision requests). */
+export interface TextContentPart {
+  type: "text";
+  text: string;
+}
+
+export interface ImageContentPart {
+  type: "image_url";
+  image_url: { url: string; detail?: string };
+}
+
+export type ContentPart = TextContentPart | ImageContentPart;
+
+/** Message content: plain text, or an ordered list of text/image parts. */
+export type MessageContent = string | ContentPart[] | null;
+
+/** A tool call carried on an assistant message (request side; fields are
+ *  optional because clients vary — wire translators fill defaults). */
+export interface MessageToolCall {
+  id?: string;
+  type?: string;
+  function?: { name: string; arguments?: string };
+}
+
 /** Minimal OpenAI-style chat completion request (subset we support). */
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: MessageContent;
+  /** Assistant tool calls — preserved end-to-end so wire translators can
+   *  map them to native function-call formats instead of dropping them. */
+  tool_calls?: MessageToolCall[];
+  /** For role:"tool" messages: the id of the call being answered. */
+  tool_call_id?: string;
+  /** For role:"tool" messages: the function name (some wires require it). */
+  name?: string;
+}
+
+/** Concatenated text of a message content: strings pass through unchanged;
+ *  part arrays contribute their text parts (images contribute nothing). */
+export function contentText(content: MessageContent | undefined): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((p): p is TextContentPart => p?.type === "text")
+    .map((p) => p.text ?? "")
+    .join("");
+}
+
+/** True when the content carries at least one image part. */
+export function hasImageParts(content: MessageContent | undefined): boolean {
+  return Array.isArray(content) && content.some((p) => p?.type === "image_url");
+}
+
+/** Parse a `data:` URL into media type + payload (null when not a data URL). */
+export function parseDataUrl(url: string): { mediaType: string; data: string } | null {
+  const m = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(url);
+  if (!m) return null;
+  return { mediaType: m[1] || "application/octet-stream", data: m[3] ?? "" };
 }
 
 export interface ToolDef {

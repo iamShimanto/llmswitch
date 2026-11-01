@@ -1,4 +1,8 @@
-import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers/types.js";
+import {
+  contentText,
+  type ChatCompletionRequest,
+  type ChatCompletionResponse,
+} from "../providers/types.js";
 
 /**
  * AWS Kiro translator. OpenAI-compatible wire with `profileArn` passthrough
@@ -11,7 +15,7 @@ export function toKiroRequest(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {
     model: body.model,
-    messages: body.messages.map((m) => ({ role: m.role, content: m.content ?? "" })),
+    messages: body.messages.map((m) => ({ role: m.role, content: contentText(m.content) })),
     stream: body.stream ?? false,
   };
   if (body.temperature !== undefined) out.temperature = body.temperature;

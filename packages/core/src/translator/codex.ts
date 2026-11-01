@@ -5,19 +5,37 @@ import type { ChatCompletionRequest, ChatCompletionResponse } from "../providers
  * Chat completions → Responses API `input` array; `output` array → choices.
  */
 
+type ResponsesContentPart =
+  | { type: "input_text" | "output_text"; text: string }
+  | { type: "input_image"; image_url: string };
+
 interface ResponsesInputItem {
   role: "system" | "user" | "assistant" | "developer";
-  content: string;
+  content: string | ResponsesContentPart[];
 }
 
 export function toCodexRequest(body: ChatCompletionRequest): Record<string, unknown> {
   const input: ResponsesInputItem[] = [];
   for (const m of body.messages) {
     if (m.role === "tool") continue;
-    input.push({
-      role: m.role === "system" ? "developer" : (m.role as "user" | "assistant"),
-      content: m.content ?? "",
-    });
+    const role = m.role === "system" ? "developer" : (m.role as "user" | "assistant");
+    if (Array.isArray(m.content)) {
+      // Multimodal: text parts keep their role flavour (input_text /
+      // output_text), image parts ride as input_image URLs (data URLs
+      // included — the Responses API accepts them inline).
+      const textType = m.role === "assistant" ? "output_text" : "input_text";
+      const parts: ResponsesContentPart[] = [];
+      for (const p of m.content) {
+        if (p?.type === "text") {
+          if (p.text) parts.push({ type: textType, text: p.text });
+        } else if (p?.type === "image_url") {
+          parts.push({ type: "input_image", image_url: p.image_url?.url ?? "" });
+        }
+      }
+      input.push({ role, content: parts.length > 0 ? parts : "" });
+      continue;
+    }
+    input.push({ role, content: m.content ?? "" });
   }
   return {
     model: body.model,

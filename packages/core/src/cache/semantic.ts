@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ChatCompletionResponse } from "../providers/types.ts";
+import type { ChatCompletionResponse } from "../providers/types.js";
+import { contentText, type MessageContent } from "../providers/types.js";
 
 /**
  * Semantic prompt cache. Matches paraphrased prompts by meaning, not bytes.
@@ -107,9 +108,9 @@ export class SemanticCache {
   ) {}
 
   /** Canonical prompt text for similarity (last user message). */
-  static promptText(messages: Array<{ role: string; content: string | null }>): string {
+  static promptText(messages: Array<{ role: string; content: MessageContent }>): string {
     const users = messages.filter((m) => m.role === "user");
-    return (users[users.length - 1]?.content ?? "").slice(0, 2000);
+    return contentText(users[users.length - 1]?.content).slice(0, 2000);
   }
 
   /** Scope string for a request: responses are only shared inside it. */
@@ -117,11 +118,11 @@ export class SemanticCache {
     namespace: string,
     providerId: string,
     model: string,
-    messages: Array<{ role: string; content: string | null }>,
+    messages: Array<{ role: string; content: MessageContent }>,
   ): string {
     const system = messages
       .filter((m) => m.role === "system")
-      .map((m) => m.content ?? "")
+      .map((m) => contentText(m.content))
       .join("\n");
     const sysHash = createHash("sha256").update(system).digest("hex").slice(0, 12);
     return `${namespace}|${providerId}|${model}|${sysHash}`;

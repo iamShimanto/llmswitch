@@ -25,6 +25,7 @@ import type {
   ChatCompletionResponse,
   ResolvedProvider,
 } from "../providers/types.js";
+import { contentText } from "../providers/types.js";
 import { classifyStatus, UpstreamError } from "../router/errors.js";
 import type { ExecuteResult } from "./http.js";
 
@@ -89,7 +90,7 @@ export function resolveTraeCreds(env: NodeJS.ProcessEnv = process.env, accountId
 export function flattenTraeQuery(body: ChatCompletionRequest): string {
   const parts: string[] = [];
   for (const m of body.messages ?? []) {
-    const content = m.content ?? "";
+    const content = contentText(m.content);
     if (m.role === "system") parts.push(`[System]\n${content}`);
     else if (m.role === "assistant") parts.push(`[Assistant]\n${content}`);
     else parts.push(content);

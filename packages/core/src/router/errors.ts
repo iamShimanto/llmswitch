@@ -82,3 +82,26 @@ export class UpstreamError extends Error {
     this.name = "UpstreamError";
   }
 }
+
+/**
+ * Typed client error: the request carries image content but the selected
+ * provider's transport cannot carry images. Classified `bad_request`
+ * (never retried, never falls through the provider chain) and surfaced to
+ * clients as HTTP 400 with `error.type: "vision_not_supported"` — distinct
+ * from an ingress schema rejection.
+ */
+export class VisionNotSupportedError extends UpstreamError {
+  readonly errorType = "vision_not_supported";
+  constructor(providerId: string, model: string) {
+    super(
+      "bad_request",
+      400,
+      `model ${providerId}:${model} cannot accept image input through this gateway: remove the image parts or choose a vision-capable model/provider`,
+    );
+    this.name = "VisionNotSupportedError";
+  }
+}
+
+export function isVisionNotSupported(err: unknown): err is VisionNotSupportedError {
+  return err instanceof VisionNotSupportedError;
+}

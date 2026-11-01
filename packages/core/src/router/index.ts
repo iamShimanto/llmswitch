@@ -18,9 +18,10 @@ import { executeWebChatChat, WEBCHAT_PROVIDER_IDS } from "../executor/webchat.js
 import { AccountPool, type AccountStrategy } from "../accounts/index.js";
 import { orderAccounts } from "../accounts/selection.js";
 import type { RoutingRule } from "../store/db.js";
-import type {
-  ChatCompletionRequest,
-  ResolvedProvider,
+import {
+  hasImageParts,
+  type ChatCompletionRequest,
+  type ResolvedProvider,
 } from "../providers/types.js";
 import { CooldownTracker } from "../quota/limiter.js";
 import { PromptCache } from "../cache/index.js";
@@ -30,7 +31,13 @@ import { orderComboTargets, type RouterCombo } from "../combos/index.js";
 import { autoTemplate, buildAutoTargets } from "../combos/autoCatalog.js";
 import { buildEmulationPrompt, nativeTools, parseEmulatedToolCall } from "../tools/emulation.js";
 import { SemanticCache } from "../cache/semantic.js";
-import { classifyError, isRetryable, UpstreamError } from "./errors.js";
+import {
+  classifyError,
+  isRetryable,
+  isVisionNotSupported,
+  UpstreamError,
+  VisionNotSupportedError,
+} from "./errors.js";
 import { ModelBreaker, type BreakerSnapshotEntry } from "./breaker.js";
 import {
   clearStickyProvider,
@@ -161,6 +168,41 @@ async function runDedicated(
   timeoutMs: number,
   accountId: string | null,
 ): Promise<ExecuteResult | null> {
+  // Vision gate: dedicated transports that cannot carry image parts fail
+  // fast with a typed client error instead of silently dropping the image
+  // or mangling it in a text-only converter. Vision-capable dedicated
+  // transports (Gemini/Anthropic/Responses wires, Copilot, Vertex's
+  // OpenAI-compatible endpoint, Zed's per-provider translation) are exempt.
+  if (body.messages.some((m) => hasImageParts(m.content))) {
+    const dedicated =
+      provider.id === "antigravity" ||
+      provider.id === "claude" ||
+      provider.id === "codex" ||
+      provider.id === "muse-code" ||
+      provider.id === "cursor" ||
+      provider.id === "kiro" ||
+      provider.id === "trae" ||
+      provider.id === "zed-hosted" ||
+      provider.id === "clinepass" ||
+      P11I_OAUTH_IDS.has(provider.id) ||
+      provider.id === "duckduckgo-web" ||
+      provider.id === "github" ||
+      provider.id === "ghe-copilot" ||
+      WEBCHAT_PROVIDER_IDS.has(provider.id) ||
+      provider.id === "bedrock" ||
+      provider.id === "vertex" ||
+      provider.id === "promptql";
+    const visionCapable =
+      provider.id === "antigravity" ||
+      provider.id === "agy" ||
+      provider.id === "claude" ||
+      provider.id === "codex" ||
+      provider.id === "zed-hosted" ||
+      provider.id === "github" ||
+      provider.id === "ghe-copilot" ||
+      provider.id === "vertex";
+    if (dedicated && !visionCapable) throw new VisionNotSupportedError(provider.id, model);
+  }
   if (provider.id === "antigravity") {
     return executeAntigravityChat(provider, model, body, fetchFn, timeoutMs, process.env, "antigravity", accountId);
   }
@@ -721,6 +763,9 @@ export function createRouter(providers: ResolvedProvider[], opts: RouterOptions 
       }
     }
 
+    // Typed client errors keep their shape (the routes layer maps them to
+    // a 400 with a distinct error.type instead of a generic 502).
+    if (isVisionNotSupported(lastError)) throw lastError;
     const msg = lastError instanceof Error ? lastError.message : String(lastError);
     throw new Error(`all providers failed (tried: ${attempted.join(", ")}): ${msg}`);
   }
