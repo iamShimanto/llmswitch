@@ -221,7 +221,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ messages, providers }),
     }),
-  discover: (id: string) => req<{ provider: string; models: string[] }>(`/api/providers/${id}/discover`),
+  discover: (id: string) =>
+    req<{ provider: string; models: string[]; note?: string; live?: boolean; liveModels?: number }>(
+      `/api/providers/${id}/discover`,
+    ),
   catalog: () => req<CatalogEntry[]>("/api/catalog"),
   saveProviderKey: (id: string, key: string, accountLabel?: string) =>
     req<{ ok: boolean; connected: boolean; accountId?: string }>(`/api/providers/${id}/key`, {

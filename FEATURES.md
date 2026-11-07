@@ -677,3 +677,22 @@ verbatim (per-flow redirectUriOverride; the paste-back completion
 exchanges with the same stored URI) and sends the CLI's
 id_token_add_organizations + codex_cli_simplified_flow params.
 The dashboard paste box shows the 1455 example for Codex.
+
+## Codex Discover — live account model list (2026-11-07)
+The Codex provider's "Discover models" no longer serves the built-in
+catalog as if it were discovered. Codex has no {baseUrl}/models
+listing; the authoritative list lives on OpenAI's Codex backend
+(GET chatgpt.com/backend-api/codex/models?client_version=0.50.0),
+bound to the connected ChatGPT account. Discovery now resolves the
+stored OAuth session (refreshing when expired) and queries that
+endpoint live; entry ids are parsed tolerantly (string entries, or
+slug / id / model / name on object entries — parseCodexModelsPayload).
+A non-empty live list is authoritative: it REPLACES the stored
+discovered_models:codex set and the provider's model list. An empty
+live list (HTTP 200, models: []) is reported honestly — the response
+carries live:true + liveModels:0 and a note explaining the account
+has no Codex provisioned yet (open chatgpt.com/codex once to
+activate), while the built-in catalog stays visible in the UI
+instead of being wiped. The dashboard now surfaces the server note
+under the Discover button. Verified live 2026-11-07 against the
+owner's account, which OpenAI currently provisions with 0 models.
