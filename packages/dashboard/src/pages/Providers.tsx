@@ -1285,7 +1285,7 @@ function OAuthConnectCard({ cfg }: { cfg: OAuthPanelCfg }) {
             <input
               value={pasteUrl}
               onChange={(e) => setPasteUrl(e.target.value)}
-              placeholder="http://localhost:6000/api/oauth/…/callback?code=…&state=…"
+              placeholder={cfg.id === "codex" ? "http://localhost:1455/auth/callback?code=…&state=…" : "http://localhost:6000/api/oauth/…/callback?code=…&state=…"}
               className="min-w-56 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs"
             />
             <button

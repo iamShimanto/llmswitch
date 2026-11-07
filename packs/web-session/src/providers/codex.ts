@@ -68,6 +68,10 @@ export function buildAuthUrl(redirectUri: string, codeChallenge: string, state?:
     scope: CODEX_SCOPES,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
+    // The Codex CLI sends both of these; OpenAI's consent for the
+    // public client expects the simplified CLI flow.
+    id_token_add_organizations: "true",
+    codex_cli_simplified_flow: "true",
   });
   if (state) params.set("state", state);
   return `${CODEX_AUTH_URL}?${params.toString()}`;
