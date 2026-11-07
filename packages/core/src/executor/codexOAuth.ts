@@ -79,6 +79,23 @@ export function parseCodexModelsPayload(json: unknown): string[] {
   return out;
 }
 
+/** Friendly explanation shown when the Codex backend rejects every model. */
+export const CODEX_NOT_ACTIVE_MESSAGE =
+  "Codex is not active on this ChatGPT account yet — OpenAI reports 0 Codex models for it. Open chatgpt.com/codex once to activate, then try again.";
+
+/**
+ * Map the provider-test error for Codex: when the ChatGPT backend says a
+ * model is "not supported when using Codex with a ChatGPT account", the
+ * account has no Codex provisioned at all (its live model list is empty —
+ * see CODEX_MODELS_URL), so the raw upstream text only confuses. Replace it
+ * with the activation explanation. Any other error passes through unchanged.
+ */
+export function codexTestError(error: string): string {
+  return error.includes("not supported when using Codex with a ChatGPT account")
+    ? CODEX_NOT_ACTIVE_MESSAGE
+    : error;
+}
+
 /** OmniRoute shared/constants/codexClient: CODEX_CLI_RS_ORIGINATOR = "codex_cli_rs". */
 export const CODEX_ORIGINATOR = "codex_cli_rs";
 

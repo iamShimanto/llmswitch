@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLang } from "../i18n";
 import { api, getAdminKey, getSession, type CatalogEntry, type OAuthStatus, type ProviderAccount, type ProviderInfo } from "../api";
 
@@ -436,10 +436,12 @@ function ProviderDetail({
   const avg = p.stats.calls > 0 ? Math.round(p.stats.totalLatencyMs / p.stats.calls) : null;
   const errRate = p.stats.calls > 0 ? (p.stats.errors / p.stats.calls) * 100 : 0;
 
-  const discover = async () => {
+  const runDiscover = async (auto: boolean) => {
     setDiscovering(true);
-    setError("");
-    setDiscoverNote("");
+    if (!auto) {
+      setError("");
+      setDiscoverNote("");
+    }
     try {
       const r = await api.discover(p.id);
       setModels(r.models);
@@ -447,11 +449,25 @@ function ProviderDetail({
       // account with 0 provisioned models instead of silently swapping lists).
       if (r.note) setDiscoverNote(r.note);
     } catch (e) {
-      setError(String(e));
+      // Auto-discovery (page-open probe) stays silent on failure.
+      if (!auto) setError(String(e));
     } finally {
       setDiscovering(false);
     }
   };
+
+  const discover = () => void runDiscover(false);
+
+  // Codex: surface the account-state note (e.g. "Codex is not active on this
+  // ChatGPT account") on page open, not only after a manual Discover click.
+  // Fires once per page open; fire-and-forget so the page renders immediately.
+  const codexAutoDiscoverFired = useRef(false);
+  useEffect(() => {
+    if (p.id !== "codex" || !connected || codexAutoDiscoverFired.current) return;
+    codexAutoDiscoverFired.current = true;
+    void runDiscover(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.id, connected]);
 
   const test = async () => {
     // Use the dedicated provider-test endpoint (real router, pinned
