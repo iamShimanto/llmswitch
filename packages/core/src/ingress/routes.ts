@@ -30,6 +30,14 @@ import { anthropicHeaders, fromAnthropicRequest, toAnthropicResponse } from "../
 import { WEBCHAT_PROVIDER_IDS, WEBCHAT_IMAGE_PROVIDER_IDS, executeWebChatImage } from "../executor/webchat.js";
 import { executeDuckDuckGoImage } from "../executor/duckduckgo.js";
 import { executeAntigravityImageEdit } from "../executor/antigravity.js";
+import {
+  CODEX_MODELS_URL,
+  CODEX_ORIGINATOR,
+  codexClientVersion,
+  parseCodexModelsPayload,
+  resolveCodexCreds,
+  type CodexCreds,
+} from "../executor/codexOAuth.js";
 import { isVisionNotSupported, UpstreamError } from "../router/errors.js";
 import type { AppConfig } from "../config.js";
 import { contentText, type ResolvedProvider } from "../providers/types.js";
@@ -2858,6 +2866,55 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
       return;
     }
     try {
+      // Codex has no {baseUrl}/models listing — the authoritative list is
+      // OpenAI's Codex backend, bound to the connected ChatGPT account.
+      // Ask it live with the stored OAuth session instead of serving the
+      // built-in catalog as if it were discovered.
+      if (p.id === "codex") {
+        let creds: CodexCreds | null = null;
+        try {
+          creds = await resolveCodexCreds();
+        } catch {
+          creds = null; // no session — fall through to generic/catch behavior
+        }
+        if (creds) {
+          const headers: Record<string, string> = {
+            authorization: `Bearer ${creds.accessToken}`,
+            originator: CODEX_ORIGINATOR,
+          };
+          if (creds.accountId) headers["chatgpt-account-id"] = creds.accountId;
+          const r = await fetch(
+            `${CODEX_MODELS_URL}?client_version=${encodeURIComponent(codexClientVersion())}`,
+            { headers, signal: AbortSignal.timeout(15000) },
+          );
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const liveList = parseCodexModelsPayload(await r.json());
+          if (liveList.length > 0) {
+            // Authoritative for this account: REPLACE the stored set.
+            store.setSetting("discovered_models:codex", JSON.stringify(liveList));
+            p.models = liveList;
+            store.audit("provider.models_discovered", p.id, `${liveList.length} models (live)`);
+            res.json({
+              provider: "codex",
+              models: liveList,
+              live: true,
+              note: `live from OpenAI — ${liveList.length} model(s) available to this ChatGPT account`,
+            });
+            return;
+          }
+          // HTTP 200 but zero models: Codex is not provisioned on this
+          // account. Keep the catalog visible (wiping it would look like
+          // data loss) but say plainly that those models will fail.
+          res.json({
+            provider: "codex",
+            models: p.models,
+            live: true,
+            liveModels: 0,
+            note: "OpenAI reports 0 Codex models for this ChatGPT account — Codex is not active on it yet (open chatgpt.com/codex once to activate). The listed models are the built-in catalog and will keep failing until the account has Codex access.",
+          });
+          return;
+        }
+      }
       let models: string[] = [];
       if (p.wireFormat === "anthropic") {
         const r = await fetch(`${p.baseUrl}/v1/models`, {

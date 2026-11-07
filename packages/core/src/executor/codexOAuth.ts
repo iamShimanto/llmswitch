@@ -41,6 +41,44 @@ import type { ExecuteResult } from "./http.js";
 /** Registry baseUrl. The Responses endpoint (not /chat/completions). */
 export const CODEX_OAUTH_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
 
+/**
+ * Live model-list endpoint on the same ChatGPT backend (the Codex CLI
+ * queries it with ?client_version=<v>). The list is ACCOUNT-bound: it
+ * returns exactly the Codex models the signed-in ChatGPT account may use
+ * — possibly zero when Codex is not provisioned on the account.
+ */
+export const CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
+
+/**
+ * Parse a /backend-api/codex/models payload into model ids. Entries are
+ * not shape-stable across client versions: they may be plain strings or
+ * objects carrying the id under slug / id / model / name. Trims, dedupes,
+ * drops empties and anything unrecognized; non-{models:[...]} payloads
+ * yield [].
+ */
+export function parseCodexModelsPayload(json: unknown): string[] {
+  if (!json || typeof json !== "object") return [];
+  const raw = (json as { models?: unknown }).models;
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    let id: unknown;
+    if (typeof entry === "string") {
+      id = entry;
+    } else if (entry && typeof entry === "object") {
+      const o = entry as Record<string, unknown>;
+      id = o.slug ?? o.id ?? o.model ?? o.name;
+    }
+    if (typeof id !== "string") continue;
+    const trimmed = id.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
+}
+
 /** OmniRoute shared/constants/codexClient: CODEX_CLI_RS_ORIGINATOR = "codex_cli_rs". */
 export const CODEX_ORIGINATOR = "codex_cli_rs";
 

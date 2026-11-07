@@ -344,6 +344,7 @@ function ProviderDetail({
     }
   };
   const [discovering, setDiscovering] = useState(false);
+  const [discoverNote, setDiscoverNote] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string>("");
   const [error, setError] = useState("");
@@ -438,9 +439,13 @@ function ProviderDetail({
   const discover = async () => {
     setDiscovering(true);
     setError("");
+    setDiscoverNote("");
     try {
       const r = await api.discover(p.id);
       setModels(r.models);
+      // Server notes render verbatim (e.g. Codex live-discovery explains an
+      // account with 0 provisioned models instead of silently swapping lists).
+      if (r.note) setDiscoverNote(r.note);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -474,6 +479,7 @@ function ProviderDetail({
     <div>
       <button onClick={onBack} className="mb-4 text-sm text-sky-400 hover:text-sky-300">{t("providers.backTo")}</button>
       {error && <p className="mb-4 text-red-400">{error}</p>}
+      {discoverNote && <p className="mb-4 text-sm text-amber-300">{discoverNote}</p>}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
