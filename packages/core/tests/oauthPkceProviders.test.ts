@@ -86,10 +86,14 @@ const PROVIDERS = [
     label: "Codex",
     authOrigin: "https://auth.openai.com",
     clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
+    // OpenAI registers only the Codex CLI loopback redirect for the
+    // public client; the gateway must use it verbatim or the
+    // authorize step fails with invalid_authorize_request.
+    redirectUri: "http://localhost:1455/auth/callback",
   },
 ] as const;
 
-describe.each(PROVIDERS)("$label browser OAuth (PKCE)", ({ id, authOrigin, clientId }) => {
+describe.each(PROVIDERS)("$label browser OAuth (PKCE)", ({ id, authOrigin, clientId, redirectUri }) => {
   let s: Awaited<ReturnType<typeof boot>>;
   const adminHeaders = { "x-admin-key": "adm" };
 
@@ -125,7 +129,13 @@ describe.each(PROVIDERS)("$label browser OAuth (PKCE)", ({ id, authOrigin, clien
     expect(u.searchParams.get("code_challenge_method")).toBe("S256");
     expect(u.searchParams.get("code_challenge")).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(u.searchParams.get("state")).toMatch(/^[0-9a-f]{32}$/);
-    expect(u.searchParams.get("redirect_uri")).toBe(`http://localhost:${s.port}/api/oauth/${id}/callback`);
+    expect(u.searchParams.get("redirect_uri")).toBe(
+      redirectUri ?? `http://localhost:${s.port}/api/oauth/${id}/callback`,
+    );
+    if (id === "codex") {
+      expect(u.searchParams.get("id_token_add_organizations")).toBe("true");
+      expect(u.searchParams.get("codex_cli_simplified_flow")).toBe("true");
+    }
     // PKCE flow: no client_secret is ever exposed
     expect(u.searchParams.get("client_secret")).toBeNull();
   });

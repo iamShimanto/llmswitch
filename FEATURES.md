@@ -666,3 +666,14 @@ The Gemini detail page now warns on the login-window button that
 Google blocks proxied sign-ins (verified live: the proxied SPA
 loads but its API calls fail, and Sign-in 404s through the proxy)
 and points to the Kiwi + Connect extension flow instead.
+
+## Codex OAuth redirect fix (2026-11-07)
+OpenAI rejected the gateway's Codex authorize URL with
+invalid_authorize_request: the gateway sent its own
+localhost:6000/api/oauth/codex/callback redirect, but OpenAI
+registers only the Codex CLI's http://localhost:1455/auth/callback
+for the public client. The Codex flow now uses that redirect
+verbatim (per-flow redirectUriOverride; the paste-back completion
+exchanges with the same stored URI) and sends the CLI's
+id_token_add_organizations + codex_cli_simplified_flow params.
+The dashboard paste box shows the 1455 example for Codex.

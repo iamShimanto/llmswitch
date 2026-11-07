@@ -47,6 +47,16 @@ export interface ProviderOAuthFlow {
   id: string;
   sessionName: string;
   displayName: string;
+  /**
+   * Some providers register exactly ONE redirect URI for their public
+   * CLI client and reject every other at the authorize step (OpenAI
+   * Codex: only http://localhost:1455/auth/callback). When set, this
+   * URI replaces the gateway's own /api/oauth/<id>/callback address;
+   * the user lands on a dead localhost page after consent and pastes
+   * the address-bar URL back (the /complete endpoint parses code+state
+   * from any URL and exchanges with this stored URI, so it matches).
+   */
+  redirectUriOverride?: string;
   buildAuthUrl: (redirectUri: string, codeChallenge: string, state?: string) => string;
   completeLogin: (
     code: string,
@@ -111,7 +121,7 @@ export function registerProviderOAuthRoutes(app: Express, flow: ProviderOAuthFlo
 
   // ---- Start: dashboard calls this, navigates the user to the returned URL ----
   app.get(`/api/oauth/${flow.id}/start`, (req: Request, res: Response) => {
-    const redirectUri = redirectUriFor(req, config.port, flow.id);
+    const redirectUri = flow.redirectUriOverride ?? redirectUriFor(req, config.port, flow.id);
     const state = randomBytes(16).toString("hex");
     const { codeVerifier, codeChallenge } = generatePkce();
     states.set(state, { expiresAt: Date.now() + STATE_TTL_MS, redirectUri, codeVerifier });
@@ -223,6 +233,11 @@ export const CODEX_OAUTH_FLOW: ProviderOAuthFlow = {
   id: "codex",
   sessionName: "codex",
   displayName: "Codex",
+  // OpenAI registers ONLY the Codex CLI's own loopback redirect for
+  // the public client; any other redirect_uri (e.g. the gateway's
+  // localhost:6000 callback) fails the authorize step with
+  // invalid_authorize_request — live-verified 2026-11-07.
+  redirectUriOverride: "http://localhost:1455/auth/callback",
   buildAuthUrl: buildCodexAuthUrl,
   completeLogin: completeCodexLoginWithCode,
   loadSession: loadCodexSession,
