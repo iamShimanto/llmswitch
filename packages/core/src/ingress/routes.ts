@@ -34,6 +34,7 @@ import {
   CODEX_MODELS_URL,
   CODEX_ORIGINATOR,
   codexClientVersion,
+  codexTestError,
   parseCodexModelsPayload,
   resolveCodexCreds,
   type CodexCreds,
@@ -2484,11 +2485,15 @@ export function registerRoutes(app: Express, deps: RouteDeps): void {
         keyId: null, provider: p.id, model, promptTokens: 0, completionTokens: 0,
         latencyMs: Date.now() - started, status: "error", costUsd: 0,
       });
+      const rawError = err instanceof Error ? err.message : String(err);
       res.json({
         ok: false,
         model,
         latencyMs: Date.now() - started,
-        error: err instanceof Error ? err.message : String(err),
+        // Codex on an unprovisioned ChatGPT account fails every model with
+        // one opaque upstream sentence — show the activation explanation
+        // instead (test endpoint only; router errors stay untouched).
+        error: p.id === "codex" ? codexTestError(rawError) : rawError,
       });
     }
   });

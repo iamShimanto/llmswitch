@@ -696,3 +696,10 @@ activate), while the built-in catalog stays visible in the UI
 instead of being wiped. The dashboard now surfaces the server note
 under the Discover button. Verified live 2026-11-07 against the
 owner's account, which OpenAI currently provisions with 0 models.
+The explanation is now shown proactively: the Codex detail page runs
+the live discovery automatically on open (once per page open,
+fire-and-forget) so the amber account-state banner appears without a
+manual Discover click, and the provider Test endpoint maps the
+backend's "not supported when using Codex with a ChatGPT account"
+failure to the plain activation message (codexTestError) instead of
+the raw truncated upstream error.

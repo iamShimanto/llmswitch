@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCodexModelsPayload } from "../src/executor/codexOAuth.js";
+import { CODEX_NOT_ACTIVE_MESSAGE, codexTestError, parseCodexModelsPayload } from "../src/executor/codexOAuth.js";
 
 describe("parseCodexModelsPayload", () => {
   it("accepts plain string entries", () => {
@@ -57,5 +57,23 @@ describe("parseCodexModelsPayload", () => {
     expect(parseCodexModelsPayload({ models: "gpt-5-codex" })).toEqual([]);
     expect(parseCodexModelsPayload({ data: [{ id: "gpt-5-codex" }] })).toEqual([]);
     expect(parseCodexModelsPayload([{ slug: "gpt-5-codex" }])).toEqual([]);
+  });
+});
+
+describe("codexTestError", () => {
+  it("replaces the unprovisioned-account upstream error with the activation message", () => {
+    const raw =
+      "all providers failed (tried: codex): codex upstream 400 Bad Request: The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.";
+    expect(codexTestError(raw)).toBe(CODEX_NOT_ACTIVE_MESSAGE);
+  });
+
+  it("leaves other errors unchanged", () => {
+    const raw = "all providers failed (tried: codex): codex upstream 401 Unauthorized: token expired";
+    expect(codexTestError(raw)).toBe(raw);
+    expect(codexTestError("network timeout")).toBe("network timeout");
+  });
+
+  it("leaves an empty error unchanged", () => {
+    expect(codexTestError("")).toBe("");
   });
 });
